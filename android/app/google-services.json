@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "973494872827",
+    "project_id": "yaqin-app-22180",
+    "storage_bucket": "yaqin-app-22180.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:973494872827:android:8819bf2572a7c976a9de5e",
+        "android_client_info": {
+          "package_name": "com.yaqin.findix"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLV1v7q7oc-550GRREmetszE7zlmRLqZk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
