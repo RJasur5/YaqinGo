@@ -38,7 +38,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _currentTab = 0;
+  int _currentTab = 3;
   List<CategoryModel> _categories = [];
   List<MasterModel> _topMasters = [];
   bool _isLoading = true;
