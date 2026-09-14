@@ -961,16 +961,15 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                       final bool hasApplied = order['has_applied'] == true;
                       final bool isCompany = order['is_company'] == true;
 
-                      if (hasApplied) {
+                      // Company: gray after applying
+                      if (isCompany && hasApplied) {
                         return SizedBox(
                           height: 50,
                           child: ElevatedButton.icon(
                             onPressed: null,
                             icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
                             label: Text(
-                              isCompany
-                                  ? (AppStrings.isRu ? 'Отправлено' : 'Yuborildi')
-                                  : (AppStrings.isRu ? 'Позвонили ✓' : 'Qo\'ng\'iroq ✓'),
+                              AppStrings.isRu ? 'Отправлено' : 'Yuborildi',
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                             ),
                             style: ElevatedButton.styleFrom(
@@ -993,13 +992,13 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                         );
                       }
 
-                      // Regular order — Позвонить
+                      // Regular order — always green Позвонить, unlimited calls
                       final String rawPhone = (order['client_phone'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '');
                       return SizedBox(
                         height: 50,
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            // 1. Open phone dialer immediately
+                            // Open phone dialer immediately
                             if (rawPhone.isNotEmpty) {
                               final uri = Uri.parse('tel:$rawPhone');
                               try {
@@ -1008,7 +1007,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                                 debugPrint('Could not launch phone: $e');
                               }
                             }
-                            // 2. Record call in background - order stays in list
+                            // Record call in background silently
                             _acceptOrder(order['id']);
                           },
                           icon: const Icon(Icons.phone_rounded, size: 18),
@@ -1157,7 +1156,8 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                   final bool hasApplied = order['has_applied'] == true;
                   final bool isCompany = order['is_company'] == true;
 
-                  if (hasApplied) {
+                  // Company: gray after applying
+                  if (isCompany && hasApplied) {
                     return SizedBox(
                       width: double.infinity,
                       height: 52,
@@ -1165,9 +1165,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                         onPressed: null,
                         icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
                         label: Text(
-                          isCompany
-                              ? (AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan')
-                              : (AppStrings.isRu ? 'Вы уже позвонили ✓' : 'Siz allaqachon qo\'ng\'iroq qildingiz ✓'),
+                          AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan',
                           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                         ),
                         style: ElevatedButton.styleFrom(
