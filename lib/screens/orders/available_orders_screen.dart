@@ -839,17 +839,6 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
-            
-              GestureDetector(
-                onTap: () => _showOrderDetail(order),
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    AppStrings.isRu ? 'Подробнее →' : 'Batafsil →',
-                    style: TextStyle(color: theme.primaryColor, fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
             const SizedBox(height: 12),
             _buildOptionsRow(order),
             const SizedBox(height: 16),
@@ -940,37 +929,103 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            if (order['price'] != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  '${PriceFormatter.format(order['price'])} ${AppStrings.sum}',
+                  style: TextStyle(color: theme.textTheme.titleLarge?.color, fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+            // Подробнее + Позвонить/Откликнуться buttons
             Row(
               children: [
-                if (order['price'] != null) ...[
-                  Text(
-                    '${PriceFormatter.format(order['price'])} ${AppStrings.sum}',
-                    style: TextStyle(color: theme.textTheme.titleLarge?.color, fontSize: 18, fontWeight: FontWeight.w700),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => _showOrderDetail(order),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: theme.primaryColor, width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text(
+                      AppStrings.isRu ? 'Подробнее' : 'Batafsil',
+                      style: TextStyle(color: theme.primaryColor, fontSize: 15, fontWeight: FontWeight.w600),
+                    ),
                   ),
-                  const Spacer(),
-                ],
-                Builder(
-                  builder: (context) {
-                    final bool hasApplied = order['has_applied'] == true;
-                    final bool isCompany = order['is_company'] == true;
-                    String buttonText;
-                    if (hasApplied) {
-                      buttonText = AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan';
-                    } else if (isCompany) {
-                      buttonText = AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish';
-                    } else {
-                      buttonText = AppStrings.isRu ? 'Принять' : 'Qabul qilish';
-                    }
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Builder(
+                    builder: (context) {
+                      final bool hasApplied = order['has_applied'] == true;
+                      final bool isCompany = order['is_company'] == true;
 
-                    return SizedBox(
-                      width: hasApplied ? 165 : 140,
-                      height: 48,
-                      child: GradientButton(
-                        text: buttonText,
-                        onPressed: hasApplied ? null : () => _acceptOrder(order['id']),
-                      ),
-                    );
-                  },
+                      // Company: gray after applying
+                      if (isCompany && hasApplied) {
+                        return SizedBox(
+                          height: 50,
+                          child: ElevatedButton.icon(
+                            onPressed: null,
+                            icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                            label: Text(
+                              AppStrings.isRu ? 'Отправлено' : 'Yuborildi',
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey.shade300,
+                              foregroundColor: Colors.grey.shade600,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        );
+                      }
+
+                      if (isCompany) {
+                        return SizedBox(
+                          height: 50,
+                          child: GradientButton(
+                            text: AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish',
+                            onPressed: () => _acceptOrder(order['id']),
+                          ),
+                        );
+                      }
+
+                      // Regular order — always green Позвонить, unlimited calls
+                      final String rawPhone = (order['client_phone'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '');
+                      return SizedBox(
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            // Open phone dialer immediately
+                            if (rawPhone.isNotEmpty) {
+                              final uri = Uri.parse('tel:$rawPhone');
+                              try {
+                                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              } catch (e) {
+                                debugPrint('Could not launch phone: $e');
+                              }
+                            }
+                            // Record call in background silently
+                            _acceptOrder(order['id']);
+                          },
+                          icon: const Icon(Icons.phone_rounded, size: 18),
+                          label: Text(
+                            AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq',
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 3,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ],
             ),
@@ -979,6 +1034,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
       ),
     );
   }
+
 
   void _showOrderDetail(dynamic order) {
     final theme = Theme.of(context);
@@ -1099,26 +1155,71 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                 builder: (context) {
                   final bool hasApplied = order['has_applied'] == true;
                   final bool isCompany = order['is_company'] == true;
-                  String buttonText;
-                  if (hasApplied) {
-                    buttonText = AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan';
-                  } else if (isCompany) {
-                    buttonText = AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish';
-                  } else {
-                    buttonText = AppStrings.isRu ? 'Принять' : 'Qabul qilish';
+
+                  // Company: gray after applying
+                  if (isCompany && hasApplied) {
+                    return SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: null,
+                        icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                        label: Text(
+                          AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan',
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey.shade300,
+                          foregroundColor: Colors.grey.shade600,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                      ),
+                    );
                   }
 
+                  if (isCompany) {
+                    return SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: GradientButton(
+                        text: AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish',
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _acceptOrder(order['id']);
+                        },
+                      ),
+                    );
+                  }
+
+                  // Regular order — Позвонить
+                  final String rawPhone = (order['client_phone'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '');
                   return SizedBox(
                     width: double.infinity,
                     height: 52,
-                    child: GradientButton(
-                      text: buttonText,
-                      onPressed: hasApplied
-                          ? null
-                          : () {
-                              Navigator.pop(ctx);
-                              _acceptOrder(order['id']);
-                            },
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        if (rawPhone.isNotEmpty) {
+                          final uri = Uri.parse('tel:$rawPhone');
+                          try {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          } catch (e) {
+                            debugPrint('Could not launch phone: $e');
+                          }
+                        }
+                        _acceptOrder(order['id']);
+                      },
+                      icon: const Icon(Icons.phone_rounded, size: 20),
+                      label: Text(
+                        AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq qilish',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 3,
+                      ),
                     ),
                   );
                 },
