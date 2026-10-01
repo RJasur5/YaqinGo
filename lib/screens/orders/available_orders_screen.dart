@@ -1,3 +1,4 @@
+import '../master_profile_setup_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
@@ -109,6 +110,13 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   }
 
   Future<void> _acceptOrder(int orderId) async {
+    final user = widget.authService.currentUser;
+    final bool isMaster = user?.role == 'master' || user?.masterProfile != null;
+    if (!isMaster) {
+      _showBecomeMasterDialog();
+      return;
+    }
+
     try {
       final res = await widget.apiService.acceptOrder(orderId);
       
@@ -1066,19 +1074,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                               height: 50,
                               width: 50,
                               child: ElevatedButton(
-                                onPressed: () async {
-                                  widget.apiService.trackOrderCall(order['id']);
-                                  String cleanTg = telegram;
-                                  if (cleanTg.startsWith('@')) {
-                                    cleanTg = cleanTg.substring(1);
-                                  }
-                                  final String tgUrl = cleanTg.startsWith('http') ? cleanTg : 'https://t.me/$cleanTg';
-                                  try {
-                                    await launchUrl(Uri.parse(tgUrl), mode: LaunchMode.externalApplication);
-                                  } catch (e) {
-                                    debugPrint('Telegram error: $e');
-                                  }
-                                },
+                                onPressed: () => _launchTelegram(telegram, order['id']),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF229ED9),
                                   foregroundColor: Colors.white,
@@ -1106,6 +1102,97 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   }
 
 
+
+
+  void _showBecomeMasterDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          backgroundColor: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              const Icon(Icons.engineering_rounded, color: AppColors.primary, size: 24),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  AppStrings.isRu ? 'Станьте мастером' : 'Usta bo\'ling',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            AppStrings.isRu
+                ? 'Чтобы откликаться на работу и принимать заказы, вам нужно заполнить анкету мастера в своём профиле.'
+                : 'Buyurtmalarga murojaat qilish va ishlarni qabul qilish uchun profilingizda usta anketasini to\'ldiring.',
+            style: TextStyle(color: theme.textTheme.bodyMedium?.color, fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(AppStrings.isRu ? 'Позже' : 'Keyinroq', style: TextStyle(color: theme.hintColor)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MasterProfileSetupScreen(
+                      apiService: widget.apiService,
+                      authService: widget.authService,
+                    ),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(AppStrings.isRu ? 'Заполнить анкету' : 'Anketani to\'ldirish'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _launchTelegram(String telegram, int orderId) async {
+    widget.apiService.trackOrderCall(orderId);
+    String cleanTg = telegram.trim();
+    if (cleanTg.startsWith('@')) {
+      cleanTg = cleanTg.substring(1);
+    }
+    if (cleanTg.startsWith('https://t.me/')) {
+      cleanTg = cleanTg.substring('https://t.me/'.length);
+    }
+    if (cleanTg.startsWith('http://t.me/')) {
+      cleanTg = cleanTg.substring('http://t.me/'.length);
+    }
+    if (cleanTg.startsWith('t.me/')) {
+      cleanTg = cleanTg.substring('t.me/'.length);
+    }
+
+    final nativeUri = Uri.parse('tg://resolve?domain=$cleanTg');
+    final webUri = Uri.parse('https://t.me/$cleanTg');
+    try {
+      if (await canLaunchUrl(nativeUri)) {
+        await launchUrl(nativeUri, mode: LaunchMode.externalNonBrowserApplication);
+      } else {
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      try {
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      } catch (e) {
+        debugPrint('Telegram launch error: $e');
+      }
+    }
+  }
 
   Future<void> _toggleFavoriteAuthor(int authorId, String? authorName) async {
     final bool currentlyFav = _favoriteAuthorIds.contains(authorId);
@@ -1350,19 +1437,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                           height: 52,
                           width: 52,
                           child: ElevatedButton(
-                            onPressed: () async {
+                            onPressed: () {
                               Navigator.pop(ctx);
-                              widget.apiService.trackOrderCall(order['id']);
-                              String cleanTg = telegram;
-                              if (cleanTg.startsWith('@')) {
-                                cleanTg = cleanTg.substring(1);
-                              }
-                              final String tgUrl = cleanTg.startsWith('http') ? cleanTg : 'https://t.me/$cleanTg';
-                              try {
-                                await launchUrl(Uri.parse(tgUrl), mode: LaunchMode.externalApplication);
-                              } catch (e) {
-                                debugPrint('Telegram error: $e');
-                              }
+                              _launchTelegram(telegram, order['id']);
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF229ED9),

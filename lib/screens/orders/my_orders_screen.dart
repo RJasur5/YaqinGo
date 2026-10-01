@@ -703,161 +703,61 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
         ? order['applicants_count']
         : (int.tryParse(order['applicants_count']?.toString() ?? '0') ?? 0);
 
-    final bool isHighInterest = calls > 0 || applicants > 0 || views >= 10;
-
     return Container(
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: theme.brightness == Brightness.dark
             ? Colors.white.withValues(alpha: 0.04)
             : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: theme.brightness == Brightness.dark
               ? Colors.white.withValues(alpha: 0.08)
               : const Color(0xFFE2E8F0),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.insights_rounded, size: 16, color: AppColors.primary),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                AppStrings.isRu ? 'Статистика объявления' : 'E\'lon statistikasi',
-                style: TextStyle(
-                  color: theme.textTheme.bodyLarge?.color,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: isHighInterest
-                      ? Colors.green.withValues(alpha: 0.12)
-                      : Colors.blue.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  isHighInterest
-                      ? (AppStrings.isRu ? 'Активно' : 'Faol')
-                      : (AppStrings.isRu ? 'В поиске' : 'Qidiruvda'),
-                  style: TextStyle(
-                    color: isHighInterest ? Colors.green.shade700 : Colors.blue.shade700,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _buildStatMetric(
-                icon: Icons.visibility_outlined,
-                color: const Color(0xFF3B82F6),
-                value: '$views',
-                label: AppStrings.isRu ? 'Увидели' : 'Ko\'rildi',
-                theme: theme,
-              ),
-              const SizedBox(width: 6),
-              _buildStatMetric(
-                icon: Icons.touch_app_outlined,
-                color: const Color(0xFF8B5CF6),
-                value: '$clicks',
-                label: AppStrings.isRu ? 'Подробнее' : 'Ochildi',
-                theme: theme,
-              ),
-              const SizedBox(width: 6),
-              _buildStatMetric(
-                icon: Icons.call_outlined,
-                color: const Color(0xFF10B981),
-                value: '$calls',
-                label: AppStrings.isRu ? 'Звонки' : 'Qo\'ng\'iroq',
-                theme: theme,
-              ),
-              const SizedBox(width: 6),
-              _buildStatMetric(
-                icon: Icons.groups_outlined,
-                color: const Color(0xFFF59E0B),
-                value: '$applicants',
-                label: AppStrings.isRu ? 'Отклики' : 'Arizalar',
-                theme: theme,
-              ),
-            ],
-          ),
+          _buildCompactStat(Icons.visibility_outlined, const Color(0xFF2563EB), '$views', AppStrings.isRu ? 'увидели' : 'ko\'rildi', theme),
+          Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
+          _buildCompactStat(Icons.touch_app_outlined, const Color(0xFF7C3AED), '$clicks', AppStrings.isRu ? 'кликнули' : 'ochildi', theme),
+          Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
+          _buildCompactStat(Icons.phone_outlined, const Color(0xFF059669), '$calls', AppStrings.isRu ? 'звонков' : 'qo\'ng\'iroq', theme),
+          Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
+          _buildCompactStat(Icons.groups_outlined, const Color(0xFFD97706), '$applicants', AppStrings.isRu ? 'откликов' : 'ariza', theme),
         ],
       ),
     );
   }
 
-  Widget _buildStatMetric({
-    required IconData icon,
-    required Color color,
-    required String value,
-    required String label,
-    required ThemeData theme,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-        decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: theme.brightness == Brightness.dark
-                ? Colors.white.withValues(alpha: 0.05)
-                : const Color(0xFFEDF2F7),
+  Widget _buildCompactStat(IconData icon, Color color, String value, String label, ThemeData theme) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: theme.textTheme.bodyLarge?.color,
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
-        child: Column(
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: TextStyle(
-                color: theme.textTheme.bodyLarge?.color,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                color: theme.hintColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: TextStyle(
+            color: theme.hintColor,
+            fontSize: 10,
+          ),
         ),
-      ),
+      ],
     );
   }
+
 
   void _showRateMasterDialog(BuildContext context, dynamic order) {
     final theme = Theme.of(context);
