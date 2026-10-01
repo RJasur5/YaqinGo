@@ -27,6 +27,12 @@ class OrderResponse {
   final bool canChat;
   final bool isCompany;
   final int applicantsCount;
+  final int viewsCount;
+  final int clicksCount;
+  final int callsCount;
+  final String? contactPhone;
+  final String? contactTelegram;
+  final bool isFavoriteAuthor;
 
   OrderResponse({
     required this.id,
@@ -55,6 +61,12 @@ class OrderResponse {
     this.canChat = true,
     this.isCompany = false,
     this.applicantsCount = 0,
+    this.viewsCount = 0,
+    this.clicksCount = 0,
+    this.callsCount = 0,
+    this.contactPhone,
+    this.contactTelegram,
+    this.isFavoriteAuthor = false,
   });
 
   factory OrderResponse.fromJson(Map<String, dynamic> json) {
@@ -85,6 +97,12 @@ class OrderResponse {
       canChat: json['can_chat'] ?? true,
       isCompany: json['is_company'] ?? false,
       applicantsCount: json['applicants_count'] ?? 0,
+      viewsCount: json['views_count'] ?? 0,
+      clicksCount: json['clicks_count'] ?? 0,
+      callsCount: json['calls_count'] ?? 0,
+      contactPhone: json['contact_phone'],
+      contactTelegram: json['contact_telegram'],
+      isFavoriteAuthor: json['is_favorite_author'] ?? false,
     );
   }
 

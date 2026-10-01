@@ -26,6 +26,8 @@ class CreateOrderScreen extends StatefulWidget {
 class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _descController = TextEditingController();
   final _priceController = TextEditingController();
+  final _contactPhoneController = TextEditingController();
+  final _telegramController = TextEditingController();
   
   bool _isLoading = true;
   bool _isSaving = false;
@@ -157,6 +159,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         includeTaxi: _includeTaxi,
         isCompany: isCompOrder,
         requiredWorkers: _isCompanyAccount ? (_isCompany ? 1000 : 1) : _workersCount,
+        contactPhone: _contactPhoneController.text.trim().isEmpty ? null : _contactPhoneController.text.trim(),
+        contactTelegram: _telegramController.text.trim().isEmpty ? null : _telegramController.text.trim(),
       );
       if (mounted) {
         Navigator.pop(context, true);
@@ -543,6 +547,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       _buildWorkersCountSelector(theme),
                     ],
 
+                    const SizedBox(height: 24),
+                    _buildContactDetailsSection(theme),
                     const SizedBox(height: 40),
                     GradientButton(
                       text: AppStrings.isRu ? 'Опубликовать' : 'E\'lonni joylash',
@@ -752,10 +758,93 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   }
 
 
+
+  Widget _buildContactDetailsSection(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.04)
+            : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.brightness == Brightness.dark
+              ? Colors.white.withValues(alpha: 0.08)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.contact_phone_rounded, size: 16, color: AppColors.primary),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  AppStrings.isRu ? 'Контакты для связи (необязательно)' : 'Aloqa ma\'lumotlari (ixtiyoriy)',
+                  style: TextStyle(
+                    color: theme.textTheme.bodyLarge?.color,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            AppStrings.isRu
+                ? 'Если хотите принимать звонки на другой номер или через Telegram'
+                : 'Qo\'ng\'iroqlarni boshqa raqam yoki Telegram orqali qabul qilish uchun',
+            style: TextStyle(color: theme.hintColor, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _contactPhoneController,
+            keyboardType: TextInputType.phone,
+            style: theme.textTheme.bodyLarge,
+            decoration: InputDecoration(
+              labelText: AppStrings.isRu ? 'Другой номер телефона' : 'Boshqa telefon raqami',
+              hintText: '+998 90 123 45 67',
+              prefixIcon: const Icon(Icons.phone_rounded, size: 20, color: AppColors.primary),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              filled: true,
+              fillColor: theme.cardTheme.color,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _telegramController,
+            keyboardType: TextInputType.text,
+            style: theme.textTheme.bodyLarge,
+            decoration: InputDecoration(
+              labelText: AppStrings.isRu ? 'Telegram (юзернейм или ссылка на бот)' : 'Telegram (foydalanuvchi nomi yoki bot)',
+              hintText: '@username yoki https://t.me/bot',
+              prefixIcon: const Icon(Icons.send_rounded, size: 20, color: Color(0xFF229ED9)),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              filled: true,
+              fillColor: theme.cardTheme.color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _descController.dispose();
     _priceController.dispose();
+    _contactPhoneController.dispose();
+    _telegramController.dispose();
     super.dispose();
   }
 }

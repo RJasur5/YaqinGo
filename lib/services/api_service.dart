@@ -484,6 +484,8 @@ class ApiService {
     String? landmark,
     double? lat,
     double? lon,
+    String? contactPhone,
+    String? contactTelegram,
   }) async {
     final res = await _safePost(
       Uri.parse(ApiConfig.orders),
@@ -501,6 +503,8 @@ class ApiService {
         'landmark': landmark,
         'lat': lat,
         'lon': lon,
+        if (contactPhone != null && contactPhone.isNotEmpty) 'contact_phone': contactPhone,
+        if (contactTelegram != null && contactTelegram.isNotEmpty) 'contact_telegram': contactTelegram,
       }),
     );
     if (res.statusCode == 200) {
@@ -983,5 +987,46 @@ class ApiService {
       throw (jsonDecode(res.body)['detail'] ?? 'Failed to extend HR announcement');
     }
   }
-}
 
+  // ==================== ORDER TRACKING & FAVORITE AUTHORS ====================
+
+  Future<void> trackOrderView(int orderId) async {
+    try {
+      await _safePost(Uri.parse(ApiConfig.trackOrderView(orderId)), headers: _headers);
+    } catch (_) {}
+  }
+
+  Future<void> trackOrderClick(int orderId) async {
+    try {
+      await _safePost(Uri.parse(ApiConfig.trackOrderClick(orderId)), headers: _headers);
+    } catch (_) {}
+  }
+
+  Future<void> trackOrderCall(int orderId) async {
+    try {
+      await _safePost(Uri.parse(ApiConfig.trackOrderCall(orderId)), headers: _headers);
+    } catch (_) {}
+  }
+
+  Future<bool> toggleFavoriteAuthor(int authorId) async {
+    try {
+      final res = await _safePost(Uri.parse(ApiConfig.toggleFavoriteAuthor(authorId)), headers: _headers);
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data['is_favorite'] == true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<List<int>> getFavoriteAuthorIds() async {
+    try {
+      final res = await _safeGet(Uri.parse(ApiConfig.favoriteAuthorIds), headers: _headers);
+      if (res.statusCode == 200) {
+        final list = jsonDecode(res.body) as List;
+        return list.map((e) => (e as num).toInt()).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+}

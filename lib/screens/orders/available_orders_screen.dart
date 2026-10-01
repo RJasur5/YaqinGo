@@ -48,6 +48,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   
   int? _selectedCategoryId;
   int? _selectedSubcategoryId;
+  Set<int> _favoriteAuthorIds = {};
+  final Set<int> _trackedViewIds = {};
+  bool _onlyFavorites = false;
   String _searchQuery = '';
   String? _selectedSearchCity;
   String _selectedAccountTypeFilter = 'person'; // 'person' or 'company'
@@ -191,6 +194,12 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
 
       if (!_isMapView) {
         return true;
+      }
+
+      if (_onlyFavorites) {
+        final clientId = order['client_id'];
+        final isFav = (clientId != null && _favoriteAuthorIds.contains(clientId)) || order['is_favorite_author'] == true;
+        if (!isFav) return false;
       }
 
       if (_selectedAccountTypeFilter == 'person') {
@@ -435,16 +444,35 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               itemCount: _isMapView ? widget.categories.length : widget.categories.length + 1,
               itemBuilder: (context, index) {
                 if (!_isMapView && index == 0) {
-                  return _buildFilterChip(
-                    label: AppStrings.isRu ? 'Все' : 'Barchasi',
-                    selected: _selectedCategoryId == null,
-                    onSelected: (s) {
-                      setState(() {
-                        _selectedCategoryId = null;
-                        _selectedSubcategoryId = null;
-                      });
-                      _loadOrders();
-                    },
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildFilterChip(
+                        label: AppStrings.isRu ? 'Все' : 'Barchasi',
+                        selected: _selectedCategoryId == null && !_onlyFavorites,
+                        onSelected: (s) {
+                          setState(() {
+                            _onlyFavorites = false;
+                            _selectedCategoryId = null;
+                            _selectedSubcategoryId = null;
+                          });
+                          _loadOrders();
+                        },
+                      ),
+                      _buildFilterChip(
+                        label: AppStrings.isRu ? '⭐ Избранные' : '⭐ Sevimlilar',
+                        selected: _onlyFavorites,
+                        onSelected: (s) {
+                          setState(() {
+                            _onlyFavorites = !_onlyFavorites;
+                            if (_onlyFavorites) {
+                              _selectedCategoryId = null;
+                              _selectedSubcategoryId = null;
+                            }
+                          });
+                        },
+                      ),
+                    ],
                   );
                 }
                 final catIndex = _isMapView ? index : index - 1;
@@ -703,6 +731,13 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
     // Debug to console to verify the 5-hour shift
     debugPrint('TIME DEBUG: Raw=${order['created_at']} | Local=${date.toString()}');
 
+    // Auto-track order view once per session
+    final orderId = order['id'];
+    if (orderId != null && !_trackedViewIds.contains(orderId)) {
+      _trackedViewIds.add(orderId);
+      widget.apiService.trackOrderView(orderId);
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -714,7 +749,10 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: () => _showOrderDetail(order),
+          onTap: () {
+            widget.apiService.trackOrderClick(order['id']);
+            _showOrderDetail(order);
+          },
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -931,7 +969,10 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => _showOrderDetail(order),
+                    onPressed: () {
+                      widget.apiService.trackOrderClick(order['id']);
+                      _showOrderDetail(order);
+                    },
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: theme.primaryColor, width: 1.5),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -981,37 +1022,75 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                         );
                       }
 
-                      // Regular order — always green Позвонить, unlimited calls
-                      final String rawPhone = (order['client_phone'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '');
-                      return SizedBox(
-                        height: 50,
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            // Open phone dialer immediately
-                            if (rawPhone.isNotEmpty) {
-                              final uri = Uri.parse('tel:$rawPhone');
-                              try {
-                                await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              } catch (e) {
-                                debugPrint('Could not launch phone: $e');
-                              }
-                            }
-                            // Record call in background silently
-                            _acceptOrder(order['id']);
-                          },
-                          icon: const Icon(Icons.phone_rounded, size: 18),
-                          label: Text(
-                            AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq',
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      final String contactPhone = (order['contact_phone'] ?? '').toString().trim();
+                      final String phoneToUse = contactPhone.isNotEmpty ? contactPhone : (order['client_phone'] ?? '').toString();
+                      final String rawPhone = phoneToUse.replaceAll(RegExp(r'[^\d+]'), '');
+                      final String telegram = (order['contact_telegram'] ?? '').toString().trim();
+
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 50,
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  widget.apiService.trackOrderCall(order['id']);
+                                  if (rawPhone.isNotEmpty) {
+                                    final uri = Uri.parse('tel:$rawPhone');
+                                    try {
+                                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                    } catch (e) {
+                                      debugPrint('Could not launch phone: $e');
+                                    }
+                                  }
+                                  _acceptOrder(order['id']);
+                                },
+                                icon: const Icon(Icons.phone_rounded, size: 18),
+                                label: Text(
+                                  AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  elevation: 3,
+                                ),
+                              ),
+                            ),
                           ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            elevation: 3,
-                          ),
-                        ),
+                          if (telegram.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              height: 50,
+                              width: 50,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  widget.apiService.trackOrderCall(order['id']);
+                                  String cleanTg = telegram;
+                                  if (cleanTg.startsWith('@')) {
+                                    cleanTg = cleanTg.substring(1);
+                                  }
+                                  final String tgUrl = cleanTg.startsWith('http') ? cleanTg : 'https://t.me/$cleanTg';
+                                  try {
+                                    await launchUrl(Uri.parse(tgUrl), mode: LaunchMode.externalApplication);
+                                  } catch (e) {
+                                    debugPrint('Telegram error: $e');
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF229ED9),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  padding: EdgeInsets.zero,
+                                  elevation: 3,
+                                ),
+                                child: const Icon(Icons.send_rounded, size: 20),
+                              ),
+                            ),
+                          ],
+                        ],
                       );
                     },
                   ),
@@ -1026,6 +1105,51 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
 );
   }
 
+
+
+  Future<void> _toggleFavoriteAuthor(int authorId, String? authorName) async {
+    final bool currentlyFav = _favoriteAuthorIds.contains(authorId);
+    setState(() {
+      if (currentlyFav) {
+        _favoriteAuthorIds.remove(authorId);
+      } else {
+        _favoriteAuthorIds.add(authorId);
+      }
+    });
+
+    final bool nowFav = await widget.apiService.toggleFavoriteAuthor(authorId);
+    if (mounted) {
+      setState(() {
+        if (nowFav) {
+          _favoriteAuthorIds.add(authorId);
+        } else {
+          _favoriteAuthorIds.remove(authorId);
+        }
+      });
+      final name = authorName != null ? authorName.capitalizeWords() : (AppStrings.isRu ? 'Работодатель' : 'Ish beruvchi');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(nowFav ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  nowFav
+                      ? (AppStrings.isRu ? '$name добавлен в избранное ⭐' : '$name sevimlilarga qo\'shildi ⭐')
+                      : (AppStrings.isRu ? '$name удален из избранных' : '$name sevimlilardan o\'chirildi'),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: nowFav ? Colors.green.shade700 : Colors.grey.shade800,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+  }
 
   void _showOrderDetail(dynamic order) {
     final theme = Theme.of(context);
@@ -1182,36 +1306,76 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                     );
                   }
 
-                  // Regular order — Позвонить
-                  final String rawPhone = (order['client_phone'] ?? '').toString().replaceAll(RegExp(r'[^\d+]'), '');
-                  return SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        if (rawPhone.isNotEmpty) {
-                          final uri = Uri.parse('tel:$rawPhone');
-                          try {
-                            await launchUrl(uri, mode: LaunchMode.externalApplication);
-                          } catch (e) {
-                            debugPrint('Could not launch phone: $e');
-                          }
-                        }
-                        _acceptOrder(order['id']);
-                      },
-                      icon: const Icon(Icons.phone_rounded, size: 20),
-                      label: Text(
-                        AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq qilish',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  final String contactPhone = (order['contact_phone'] ?? '').toString().trim();
+                  final String phoneToUse = contactPhone.isNotEmpty ? contactPhone : (order['client_phone'] ?? '').toString();
+                  final String rawPhone = phoneToUse.replaceAll(RegExp(r'[^\d+]'), '');
+                  final String telegram = (order['contact_telegram'] ?? '').toString().trim();
+
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              Navigator.pop(ctx);
+                              widget.apiService.trackOrderCall(order['id']);
+                              if (rawPhone.isNotEmpty) {
+                                final uri = Uri.parse('tel:$rawPhone');
+                                try {
+                                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                } catch (e) {
+                                  debugPrint('Could not launch phone: $e');
+                                }
+                              }
+                              _acceptOrder(order['id']);
+                            },
+                            icon: const Icon(Icons.phone_rounded, size: 20),
+                            label: Text(
+                              AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq qilish',
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              elevation: 3,
+                            ),
+                          ),
+                        ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 3,
-                      ),
-                    ),
+                      if (telegram.isNotEmpty) ...[
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          height: 52,
+                          width: 52,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              Navigator.pop(ctx);
+                              widget.apiService.trackOrderCall(order['id']);
+                              String cleanTg = telegram;
+                              if (cleanTg.startsWith('@')) {
+                                cleanTg = cleanTg.substring(1);
+                              }
+                              final String tgUrl = cleanTg.startsWith('http') ? cleanTg : 'https://t.me/$cleanTg';
+                              try {
+                                await launchUrl(Uri.parse(tgUrl), mode: LaunchMode.externalApplication);
+                              } catch (e) {
+                                debugPrint('Telegram error: $e');
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF229ED9),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              padding: EdgeInsets.zero,
+                              elevation: 3,
+                            ),
+                            child: const Icon(Icons.send_rounded, size: 22),
+                          ),
+                        ),
+                      ],
+                    ],
                   );
                 },
               ),

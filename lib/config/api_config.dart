@@ -42,6 +42,15 @@ class ApiConfig {
   static String get adminStats => '$apiUrl/admin/stats';
   
   static String get appReviews => '$apiUrl/app-reviews/';
+
+  // Order tracking & analytics
+  static String trackOrderView(int id) => '$apiUrl/orders/$id/view';
+  static String trackOrderClick(int id) => '$apiUrl/orders/$id/click';
+  static String trackOrderCall(int id) => '$apiUrl/orders/$id/call';
+
+  // Favorite authors/employers
+  static String toggleFavoriteAuthor(int authorId) => '$apiUrl/favorites/author/$authorId';
+  static String get favoriteAuthorIds => '$apiUrl/favorites/authors/ids';
 }
 
 
