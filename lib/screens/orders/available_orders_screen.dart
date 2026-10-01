@@ -710,9 +710,14 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: theme.dividerColor.withOpacity(0.1)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _showOrderDetail(order),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -902,25 +907,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                            ),
                          );
                        },
-                       child: Column(
-                         crossAxisAlignment: CrossAxisAlignment.start,
-                         children: [
-                            Text(
-                              order['client_name'].toString().capitalizeWords(),
-                              style: TextStyle(color: theme.textTheme.bodyLarge?.color, fontWeight: FontWeight.bold, fontSize: 15),
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                RatingStars(rating: (order['client_rating'] ?? 0.0).toDouble(), size: 12),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '(${order['client_reviews_count']})',
-                                  style: TextStyle(color: theme.hintColor, fontSize: 11),
-                                ),
-                              ],
-                            ),
-                         ],
+                       child: Text(
+                         order['client_name'].toString().capitalizeWords(),
+                         style: TextStyle(color: theme.textTheme.bodyLarge?.color, fontWeight: FontWeight.bold, fontSize: 15),
                        ),
                      ),
                    ),
@@ -1032,7 +1021,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 
 
