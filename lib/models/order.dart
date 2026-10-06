@@ -33,6 +33,9 @@ class OrderResponse {
   final String? contactPhone;
   final String? contactTelegram;
   final bool isFavoriteAuthor;
+  final String? branchName;
+  final String? branchId;
+  final String? branchAddress;
 
   OrderResponse({
     required this.id,
@@ -67,6 +70,9 @@ class OrderResponse {
     this.contactPhone,
     this.contactTelegram,
     this.isFavoriteAuthor = false,
+    this.branchName,
+    this.branchId,
+    this.branchAddress,
   });
 
   factory OrderResponse.fromJson(Map<String, dynamic> json) {
@@ -103,6 +109,9 @@ class OrderResponse {
       contactPhone: json['contact_phone'],
       contactTelegram: json['contact_telegram'],
       isFavoriteAuthor: json['is_favorite_author'] ?? false,
+      branchName: json['branch_name'],
+      branchId: json['branch_id'],
+      branchAddress: json['branch_address'],
     );
   }
 

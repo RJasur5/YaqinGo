@@ -12,7 +12,10 @@ import '../../services/auth_service.dart';
 import '../../services/theme_service.dart';
 import 'package:flutter/services.dart';
 import '../../utils/formatters.dart';
+import '../../utils/phone_utils.dart';
 import '../../config/regions.dart';
+import '../../config/region_geo.dart';
+import 'dart:math' as math;
 
 class CreateOrderScreen extends StatefulWidget {
   final ApiService apiService;
@@ -28,6 +31,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _priceController = TextEditingController();
   final _contactPhoneController = TextEditingController();
   final _telegramController = TextEditingController();
+  int _contactOption = 0; // 0: my phone, 1: another phone, 2: telegram
   
   bool _isLoading = true;
   bool _isSaving = false;
@@ -43,23 +47,53 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   bool get _isCompanyAccount =>
       widget.authService.currentUser?.isCompany == true ||
-      widget.authService.currentUser?.accountType == 'company';
+      widget.authService.currentUser?.accountType == 'company' ||
+      widget.authService.currentUser?.isBranchAdmin == true;
 
   String? _selectedCityKey;
   String? _selectedDistrictKey;
   double? _lat;
   double? _lon;
+  // true only when the user explicitly set a point in the map picker.
+  // Otherwise the order is shown on the map as a highlighted city / district.
+  bool _pickedOnMap = false;
+  String? _selectedBranchId;
+  String? _selectedBranchName;
+  String? _selectedBranchAddress;
+
+  void _selectBranch(Map<String, dynamic> b) {
+    setState(() {
+      _selectedBranchId = (b['id'] ?? b['branch_id'])?.toString();
+      _selectedBranchName = (b['name'] ?? b['branch_name'])?.toString();
+      _selectedBranchAddress = (b['address'] ?? b['branch_address'])?.toString();
+      _selectedCityKey = b['city_key']?.toString() ?? b['city']?.toString();
+      _selectedDistrictKey = b['district_key']?.toString() ?? b['district']?.toString();
+      final num? bLat = (b['latitude'] ?? b['lat']) as num?;
+      final num? bLon = (b['longitude'] ?? b['lon']) as num?;
+      _lat = bLat?.toDouble();
+      _lon = bLon?.toDouble();
+      if (_lat != null && _lon != null) {
+        _pickedOnMap = true;
+      }
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     final user = widget.authService.currentUser;
-    if (user != null && user.latitude != null && user.longitude != null) {
+    if (user != null && user.isBranchAdmin) {
+      _isCompany = true;
+      final mb = user.managedBranch!;
+      _selectBranch(mb);
+    } else if (_isCompanyAccount) {
+      _isCompany = true;
+      if (user != null && user.companyBranches.isNotEmpty) {
+        _selectBranch(user.companyBranches.first);
+      }
+    } else if (user != null && user.latitude != null && user.longitude != null) {
       _lat = user.latitude;
       _lon = user.longitude;
-    }
-    if (_isCompanyAccount) {
-      _isCompany = true;
     }
     _loadData();
     if (_lat == null || _lon == null) {
@@ -99,12 +133,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (mounted) {
         setState(() {
           _categories = cats;
-          _selectedCityKey = widget.authService.currentUser?.city != null
-              ? RegionsConfig.getKey(widget.authService.currentUser!.city!)
-              : null;
-          if (_selectedCityKey == null || !RegionsConfig.regionKeys.contains(_selectedCityKey)) {
-            _selectedCityKey = RegionsConfig.regionKeys.first;
-          }
+          // Default city to Tashkent only if not already set by selected branch
+          _selectedCityKey ??= RegionsConfig.regionKeys.first;
           _isLoading = false;
         });
       }
@@ -127,11 +157,21 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       setState(() => _error = AppStrings.isRu ? 'Опишите задачу' : 'Vazifani tavsiflang');
       return;
     }
-    if (_selectedCityKey != null && _selectedDistrictKey == null) {
-      setState(() => _error = AppStrings.isRu ? 'Выберите район' : 'Tumanni tanlang');
-      return;
+    if (_isCompanyAccount) {
+      final user = widget.authService.currentUser;
+      if (user != null && user.companyBranches.isNotEmpty && _selectedBranchId == null) {
+        setState(() {
+          _error = AppStrings.isRu ? 'Выберите филиал компании' : 'Kompaniya filialini tanlang';
+          _isSaving = false;
+        });
+        return;
+      }
+    } else {
+      if (_selectedCityKey != null && _selectedDistrictKey == null) {
+        setState(() => _error = AppStrings.isRu ? 'Выберите район' : 'Tumanni tanlang');
+        return;
+      }
     }
-
 
     setState(() {
       _isSaving = true;
@@ -143,9 +183,43 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       final cityForApi = _selectedCityKey != null ? RegionsConfig.getDisplayName(_selectedCityKey!) : RegionsConfig.getDisplayName(RegionsConfig.regionKeys.first);
       final districtForApi = _selectedDistrictKey != null ? RegionsConfig.getDistrictDisplay(_selectedDistrictKey!, _selectedCityKey) : null;
       final user = widget.authService.currentUser;
-      final finalLat = _lat ?? user?.latitude;
-      final finalLon = _lon ?? user?.longitude;
+      // Individuals: send an exact point only if it was picked on the map.
+      // Otherwise lat/lon = null → map highlights the selected city / district.
+      final finalLat = _lat ?? (_isCompanyAccount ? user?.latitude : (_pickedOnMap ? _lat : null));
+      final finalLon = _lon ?? (_isCompanyAccount ? user?.longitude : (_pickedOnMap ? _lon : null));
       final isCompOrder = _isCompanyAccount && _isCompany;
+
+      String? contactPhone;
+      String? contactTelegram;
+
+      if (_contactOption == 1) {
+        final digits = _contactPhoneController.text.replaceAll(RegExp(r'\D'), '');
+        if (digits.length != 9) {
+          setState(() {
+            _error = AppStrings.isRu
+                ? 'Номер телефона должен содержать ровно 9 цифр после +998'
+                : 'Telefon raqami +998 dan keyin roppa-rosa 9 ta raqamdan iborat bo\'lishi kerak';
+            _isSaving = false;
+          });
+          return;
+        }
+        contactPhone = '+998' + digits;
+      } else if (_contactOption == 2) {
+        final tg = _telegramController.text.trim();
+        if (tg.isEmpty) {
+          setState(() {
+            _error = AppStrings.isRu
+                ? 'Введите юзернейм или ссылку на Telegram'
+                : 'Telegram foydalanuvchi nomini yoki havolasini kiriting';
+            _isSaving = false;
+          });
+          return;
+        }
+        contactTelegram = tg;
+      } else {
+        contactPhone = null;
+        contactTelegram = null;
+      }
 
       await widget.apiService.createOrder(
         lat: finalLat,
@@ -157,10 +231,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         price: double.tryParse(rawPrice),
         includeLunch: _includeLunch,
         includeTaxi: _includeTaxi,
-        isCompany: isCompOrder,
-        requiredWorkers: _isCompanyAccount ? (_isCompany ? 1000 : 1) : _workersCount,
-        contactPhone: _contactPhoneController.text.trim().isEmpty ? null : _contactPhoneController.text.trim(),
-        contactTelegram: _telegramController.text.trim().isEmpty ? null : _telegramController.text.trim(),
+        isCompany: isCompOrder || (widget.authService.currentUser?.isBranchAdmin == true),
+        requiredWorkers: (_isCompanyAccount || (widget.authService.currentUser?.isBranchAdmin == true)) ? (_isCompany ? 1000 : 1) : _workersCount,
+        contactPhone: contactPhone,
+        contactTelegram: contactTelegram,
+        branchName: (_isCompanyAccount || (widget.authService.currentUser?.isBranchAdmin == true)) ? _selectedBranchName : null,
+        branchId: (_isCompanyAccount || (widget.authService.currentUser?.isBranchAdmin == true)) ? _selectedBranchId : null,
+        branchAddress: (_isCompanyAccount || (widget.authService.currentUser?.isBranchAdmin == true)) ? _selectedBranchAddress : null,
       );
       if (mounted) {
         Navigator.pop(context, true);
@@ -170,6 +247,120 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  GeoArea? get _selectedArea => _selectedCityKey == null
+      ? null
+      : RegionGeo.areaFor(_selectedCityKey, _selectedDistrictKey);
+
+  Future<void> _openMapPicker() async {
+    final area = _selectedArea;
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapPickerScreen(
+          initialLat: _lat ?? area?.center.latitude,
+          initialLon: _lon ?? area?.center.longitude,
+        ),
+      ),
+    );
+    if (result != null && result is Map<String, dynamic>) {
+      setState(() {
+        _lat = result['lat'];
+        _lon = result['lon'];
+        _pickedOnMap = true;
+      });
+    }
+  }
+
+  /// Preview of what will be highlighted on the map when no exact point is chosen.
+  Widget _buildAreaPreview(BuildContext context) {
+    final area = _selectedArea;
+    if (area == null) return const SizedBox.shrink();
+
+    final dLat = area.radiusMeters / 111320.0;
+    final dLon = area.radiusMeters / (111320.0 * math.cos(area.center.latitude * math.pi / 180));
+    final bounds = LatLngBounds(
+      LatLng(area.center.latitude - dLat, area.center.longitude - dLon),
+      LatLng(area.center.latitude + dLat, area.center.longitude + dLon),
+    );
+    const blue = Color(0xFF2563EB);
+    final isAll = !area.isDistrict;
+    final cityName = RegionsConfig.getDisplayName(_selectedCityKey!);
+    final label = isAll || _selectedDistrictKey == null
+        ? cityName
+        : '$cityName, ${RegionsConfig.getDistrictDisplay(_selectedDistrictKey!, _selectedCityKey)}';
+
+    return Container(
+      height: 170,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          children: [
+            IgnorePointer(
+              child: FlutterMap(
+                key: ValueKey('area_${area.key}'),
+                options: MapOptions(
+                  initialCameraFit: CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(18)),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                    subdomains: const ['0', '1', '2', '3'],
+                    userAgentPackageName: 'com.yaqin.findix',
+                    panBuffer: 1,
+                    keepBuffer: 3,
+                    maxZoom: 19,
+                  ),
+                  CircleLayer(circles: [
+                    CircleMarker(
+                      point: area.center,
+                      radius: area.radiusMeters,
+                      useRadiusInMeter: true,
+                      color: blue.withValues(alpha: 0.15),
+                      borderColor: blue.withValues(alpha: 0.8),
+                      borderStrokeWidth: 2.5,
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+            Positioned(
+              bottom: 8,
+              left: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.blur_circular_rounded, color: blue, size: 16),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        AppStrings.isRu ? 'На карте будет выделено: $label' : 'Xaritada belgilanadi: $label',
+                        style: const TextStyle(color: Colors.black87, fontSize: 11.5, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -253,56 +444,226 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         ),
                       ),
                     
-                    const SizedBox(height: 24),
-                    Text(
-                      AppStrings.city,
-                      style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 8),
-                    _dropdownWrapper(
-                      child: DropdownButton<String>(
-                        isExpanded: true,
-                        value: _selectedCityKey,
-                        hint: Text(AppStrings.isRu ? 'Выберите регион' : 'Viloyatni tanlang', style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color)),
-                        dropdownColor: Theme.of(context).cardTheme.color,
-                        items: RegionsConfig.regionKeys.map((key) {
-                          return DropdownMenuItem<String>(
-                            value: key,
-                            child: Text(RegionsConfig.getDisplayName(key), style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            _selectedCityKey = val;
-                            _selectedDistrictKey = null;
-                          });
-                        },
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-                    if (_selectedCityKey != null && RegionsConfig.getDistricts(_selectedCityKey).isNotEmpty) ...[
+                    if (widget.authService.currentUser?.isBranchAdmin == true) ...[
+                      const SizedBox(height: 24),
                       Text(
-                        AppStrings.isRu ? 'Район' : 'Tuman',
+                        AppStrings.isRu ? 'Филиал компании *' : 'Kompaniya filiali *',
+                        style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final user = widget.authService.currentUser!;
+                        final mb = user.managedBranch!;
+                        return Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.store_rounded, color: Colors.blue, size: 22),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${mb['branch_name']} (${mb['company_name'] ?? 'Компания'})',
+                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                    ),
+                                    if (mb['branch_address'] != null && mb['branch_address'].toString().isNotEmpty)
+                                      Text(
+                                        mb['branch_address'].toString(),
+                                        style: TextStyle(fontSize: 12, color: theme.hintColor),
+                                      ),
+                                    const SizedBox(height: 4),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        AppStrings.isRu ? 'Привязано к вашему филиалу' : 'Filialingizga biriktirilgan',
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ] else if (_isCompanyAccount) ...[
+                      const SizedBox(height: 24),
+                      Text(
+                        AppStrings.isRu ? 'Филиал компании *' : 'Kompaniya filiali *',
+                        style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      Builder(builder: (context) {
+                        final user = widget.authService.currentUser;
+                        final branches = user?.companyBranches ?? [];
+                        if (branches.isNotEmpty) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _dropdownWrapper(
+                                child: DropdownButton<String>(
+                                  isExpanded: true,
+                                  value: _selectedBranchId,
+                                  hint: Text(AppStrings.isRu ? 'Выберите филиал' : 'Filialni tanlang', style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color)),
+                                  dropdownColor: Theme.of(context).cardTheme.color,
+                                  items: branches.map((b) {
+                                    final id = b['id']?.toString() ?? '';
+                                    final name = b['name']?.toString() ?? '';
+                                    final city = b['city']?.toString() ?? '';
+                                    final addr = b['address']?.toString() ?? '';
+                                    return DropdownMenuItem<String>(
+                                      value: id,
+                                      child: Text(
+                                        '$name ($city${addr.isNotEmpty ? ", $addr" : ""})',
+                                        style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    );
+                                  }).toList(),
+                                  onChanged: (val) {
+                                    final found = branches.firstWhere((b) => b['id']?.toString() == val, orElse: () => {});
+                                    if (found.isNotEmpty) _selectBranch(found);
+                                  },
+                                ),
+                              ),
+                              if (_selectedBranchName != null) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary.withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.store_mall_directory_rounded, color: AppColors.primary, size: 22),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(_selectedBranchName!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary)),
+                                            if (_selectedBranchAddress != null && _selectedBranchAddress!.isNotEmpty) ...[
+                                              const SizedBox(height: 2),
+                                              Text(_selectedBranchAddress!, style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color)),
+                                            ],
+                                            if (_lat != null && _lon != null) ...[
+                                              const SizedBox(height: 2),
+                                              Text('📍 Lat: ${_lat!.toStringAsFixed(4)}, Lon: ${_lon!.toStringAsFixed(4)}', style: TextStyle(fontSize: 11, color: Theme.of(context).hintColor)),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          );
+                        } else {
+                          return Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.info_outline_rounded, color: Colors.amber, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      AppStrings.isRu ? 'У вас нет добавленных филиалов' : 'Filiallar qo\'shilmagan',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  AppStrings.isRu
+                                      ? 'Добавьте филиалы вашей компании в профиле, чтобы выбирать конкретный филиал для вакансии.'
+                                      : 'Vakansiyani aniq filialga biriktirish uchun profilingizda filiallar qo\'shing.',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      }),
+                    ] else ...[
+                      const SizedBox(height: 24),
+                      Text(
+                        AppStrings.city,
                         style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 8),
                       _dropdownWrapper(
                         child: DropdownButton<String>(
                           isExpanded: true,
-                          value: _selectedDistrictKey,
-                          hint: Text(AppStrings.isRu ? 'Выберите район' : 'Tumanni tanlang', style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color)),
+                          value: _selectedCityKey,
+                          hint: Text(AppStrings.isRu ? 'Выберите регион' : 'Viloyatni tanlang', style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color)),
                           dropdownColor: Theme.of(context).cardTheme.color,
-                          items: RegionsConfig.getDistricts(_selectedCityKey).map((displayName) {
-                            final key = RegionsConfig.getDistrictKey(displayName, _selectedCityKey);
+                          items: RegionsConfig.regionKeys.map((key) {
                             return DropdownMenuItem<String>(
                               value: key,
-                              child: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                              child: Text(RegionsConfig.getDisplayName(key), style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
                             );
                           }).toList(),
-                          onChanged: (val) => setState(() => _selectedDistrictKey = val),
+                          onChanged: (val) {
+                            setState(() {
+                              _selectedCityKey = val;
+                              _selectedDistrictKey = null;
+                            });
+                          },
                         ),
                       ),
+
+                      const SizedBox(height: 24),
+                      if (_selectedCityKey != null && RegionsConfig.getDistricts(_selectedCityKey).isNotEmpty) ...[
+                        Text(
+                          AppStrings.isRu ? 'Район' : 'Tuman',
+                          style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+                        _dropdownWrapper(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: _selectedDistrictKey,
+                            hint: Text(AppStrings.isRu ? 'Выберите район' : 'Tumanni tanlang', style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color)),
+                            dropdownColor: Theme.of(context).cardTheme.color,
+                            items: RegionsConfig.getDistricts(_selectedCityKey).map((displayName) {
+                              final key = RegionsConfig.getDistrictKey(displayName, _selectedCityKey);
+                              return DropdownMenuItem<String>(
+                                value: key,
+                                child: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                              );
+                            }).toList(),
+                            onChanged: (val) => setState(() => _selectedDistrictKey = val),
+                          ),
+                        ),
+                      ],
                     ],
 
                     if (!_isCompanyAccount) ...[
@@ -311,7 +672,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       AppStrings.isRu ? 'Местоположение' : 'Manzil',
                       style: TextStyle(color: Theme.of(context).textTheme.titleLarge?.color, fontSize: 16, fontWeight: FontWeight.w600),
                     ),
-                    if (_lat != null && _lon != null) ...[
+                    if (_pickedOnMap && _lat != null && _lon != null) ...[
                       const SizedBox(height: 8),
                       Container(
                         height: 180,
@@ -333,8 +694,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                                   ),
                                   children: [
                                     TileLayer(
-                                      urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                                      urlTemplate: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                                      subdomains: const ['0', '1', '2', '3'],
                                       userAgentPackageName: 'com.yaqin.findix',
+                                      panBuffer: 1,
+                                      keepBuffer: 3,
+                                      maxZoom: 19,
                                     ),
                                     MarkerLayer(
                                       markers: [
@@ -385,31 +750,25 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             elevation: 0,
                           ),
-                          onPressed: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => MapPickerScreen(
-                                  initialLat: _lat,
-                                  initialLon: _lon,
-                                ),
-                              ),
-                            );
-                            if (result != null && result is Map<String, dynamic>) {
-                              setState(() {
-                                _lat = result['lat'];
-                                _lon = result['lon'];
-                              });
-                            }
-                          },
+                          onPressed: _openMapPicker,
                           child: Text(
                             AppStrings.isRu ? 'ИЗМЕНИТЬ ЛОКАЦИЮ' : 'JOYLASHUVNI O\'ZGARTIRISH',
                             style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.5),
                           ),
                         ),
                       ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => setState(() => _pickedOnMap = false),
+                          icon: const Icon(Icons.layers_clear_rounded, size: 18),
+                          label: Text(AppStrings.isRu ? 'Убрать точку (показать весь район)' : 'Nuqtani olib tashlash (butun hudud)'),
+                        ),
+                      ),
                     ] else ...[
                       const SizedBox(height: 8),
+                      _buildAreaPreview(context),
+                      const SizedBox(height: 10),
                       Card(
                         elevation: 0,
                         shape: RoundedRectangleBorder(
@@ -418,26 +777,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         ),
                         child: ListTile(
                           leading: const Icon(Icons.location_on, color: Color(0xFF2563EB)),
-                          title: Text(AppStrings.isRu ? 'Указать местоположение на карте' : 'Xaritadan joylashuvni tanlash'),
-                          subtitle: Text(AppStrings.isRu ? 'Нажмите, чтобы выбрать' : 'Tanlash uchun bosing'),
+                          title: Text(AppStrings.isRu ? 'Указать точное место на карте' : 'Xaritadan aniq joyni belgilash'),
+                          subtitle: Text(AppStrings.isRu ? 'Необязательно — иначе будет выделен выбранный район' : 'Ixtiyoriy — aks holda tanlangan hudud belgilanadi'),
                           trailing: const Icon(Icons.chevron_right),
-                          onTap: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => MapPickerScreen(
-                                  initialLat: _lat,
-                                  initialLon: _lon,
-                                ),
-                              ),
-                            );
-                            if (result != null && result is Map<String, dynamic>) {
-                              setState(() {
-                                _lat = result['lat'];
-                                _lon = result['lon'];
-                              });
-                            }
-                          },
+                          onTap: _openMapPicker,
                         ),
                       ),
                     ],
@@ -760,6 +1103,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
 
   Widget _buildContactDetailsSection(ThemeData theme) {
+    final userPhone = widget.authService.currentUser?.phone ?? '';
+    final isRu = AppStrings.isRu;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -789,10 +1135,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  AppStrings.isRu ? 'Контакты для связи (необязательно)' : 'Aloqa ma\'lumotlari (ixtiyoriy)',
+                  isRu ? 'Способ связи' : 'Aloqa usuli',
                   style: TextStyle(
                     color: theme.textTheme.bodyLarge?.color,
-                    fontSize: 14,
+                    fontSize: 15,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -801,40 +1147,179 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            AppStrings.isRu
-                ? 'Если хотите принимать звонки на другой номер или через Telegram'
-                : 'Qo\'ng\'iroqlarni boshqa raqam yoki Telegram orqali qabul qilish uchun',
+            isRu
+                ? 'Выберите один способ связи для откликов'
+                : 'Murojaatlar uchun bitta aloqa usulini tanlang',
             style: TextStyle(color: theme.hintColor, fontSize: 12),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _contactPhoneController,
-            keyboardType: TextInputType.phone,
-            style: theme.textTheme.bodyLarge,
-            decoration: InputDecoration(
-              labelText: AppStrings.isRu ? 'Другой номер телефона' : 'Boshqa telefon raqami',
-              hintText: '+998 90 123 45 67',
-              prefixIcon: const Icon(Icons.phone_rounded, size: 20, color: AppColors.primary),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              filled: true,
-              fillColor: theme.cardTheme.color,
-            ),
+
+          // 3 Exclusive Options Selector
+          Row(
+            children: [
+              _buildContactTypeOption(
+                theme: theme,
+                title: isRu ? 'Мой номер' : 'Mening raqamim',
+                icon: Icons.person_pin_rounded,
+                selected: _contactOption == 0,
+                onTap: () => setState(() => _contactOption = 0),
+              ),
+              const SizedBox(width: 8),
+              _buildContactTypeOption(
+                theme: theme,
+                title: isRu ? 'Другой номер' : 'Boshqa raqam',
+                icon: Icons.phone_rounded,
+                selected: _contactOption == 1,
+                onTap: () => setState(() => _contactOption = 1),
+              ),
+              const SizedBox(width: 8),
+              _buildContactTypeOption(
+                theme: theme,
+                title: 'Telegram',
+                icon: Icons.send_rounded,
+                selected: _contactOption == 2,
+                color: const Color(0xFF229ED9),
+                onTap: () => setState(() => _contactOption = 2),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _telegramController,
-            keyboardType: TextInputType.text,
-            style: theme.textTheme.bodyLarge,
-            decoration: InputDecoration(
-              labelText: AppStrings.isRu ? 'Telegram (юзернейм или ссылка на бот)' : 'Telegram (foydalanuvchi nomi yoki bot)',
-              hintText: '@username yoki https://t.me/bot',
-              prefixIcon: const Icon(Icons.send_rounded, size: 20, color: Color(0xFF229ED9)),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              filled: true,
-              fillColor: theme.cardTheme.color,
+
+          const SizedBox(height: 16),
+
+          if (_contactOption == 0) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isRu ? 'Будет использоваться ваш номер:' : 'Sizning raqamingiz ishlatiladi:',
+                          style: TextStyle(fontSize: 12, color: theme.hintColor),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          userPhone.isNotEmpty ? PhoneUtils.formatPhone(userPhone) : '+998 ...',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: theme.textTheme.bodyLarge?.color,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+          ] else if (_contactOption == 1) ...[
+            TextField(
+              controller: _contactPhoneController,
+              keyboardType: TextInputType.phone,
+              inputFormatters: [
+                PhoneUtils.uzPhoneMaskFormatter,
+              ],
+              style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold, letterSpacing: 1.2),
+              decoration: InputDecoration(
+                prefixIcon: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  child: Text(
+                    '+998 ',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: theme.textTheme.bodyLarge?.color,
+                    ),
+                  ),
+                ),
+                prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+                labelText: isRu ? 'Номер телефона' : 'Telefon raqami',
+                hintText: '99 999 99 99',
+                helperText: isRu ? 'Формат: 99 999 99 99' : 'Format: 99 999 99 99',
+                helperStyle: TextStyle(color: theme.hintColor, fontSize: 11),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                filled: true,
+                fillColor: theme.cardTheme.color,
+              ),
+            ),
+          ] else if (_contactOption == 2) ...[
+            TextField(
+              controller: _telegramController,
+              keyboardType: TextInputType.text,
+              style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText: isRu ? 'Telegram для связи' : 'Aloqa uchun Telegram',
+                hintText: '@username или ссылка на бота',
+                helperText: isRu ? 'Кнопка Telegram появится в карточке' : 'Kartochkada Telegram tugmasi paydo bo\'ladi',
+                helperStyle: TextStyle(color: theme.hintColor, fontSize: 11),
+                prefixIcon: const Icon(Icons.send_rounded, size: 20, color: Color(0xFF229ED9)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                filled: true,
+                fillColor: theme.cardTheme.color,
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildContactTypeOption({
+    required ThemeData theme,
+    required String title,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    final activeColor = color ?? AppColors.primary;
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          decoration: BoxDecoration(
+            color: selected ? activeColor.withValues(alpha: 0.12) : theme.cardTheme.color,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? activeColor : theme.dividerColor.withValues(alpha: 0.4),
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: selected ? activeColor : theme.hintColor,
+                size: 22,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.2,
+                  fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                  color: selected ? activeColor : theme.textTheme.bodyMedium?.color,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

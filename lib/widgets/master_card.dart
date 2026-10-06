@@ -215,8 +215,18 @@ class MasterCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Icon(Icons.chevron_right_rounded, color: theme.textTheme.bodySmall?.color, size: 24),
+                const SizedBox(width: 4),
+                if (onFavorite != null)
+                  IconButton(
+                    icon: Icon(
+                      (isFavorite || master.isFavorite) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                      color: (isFavorite || master.isFavorite) ? Colors.red : theme.hintColor,
+                      size: 22,
+                    ),
+                    onPressed: onFavorite,
+                  )
+                else
+                  Icon(Icons.chevron_right_rounded, color: theme.textTheme.bodySmall?.color, size: 24),
               ],
             ),
           ),

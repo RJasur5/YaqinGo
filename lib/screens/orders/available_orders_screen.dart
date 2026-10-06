@@ -50,6 +50,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   int? _selectedCategoryId;
   int? _selectedSubcategoryId;
   Set<int> _favoriteAuthorIds = {};
+  Set<int> _favoriteOrderIds = {};
   final Set<int> _trackedViewIds = {};
   bool _onlyFavorites = false;
   String _searchQuery = '';
@@ -63,17 +64,49 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   void initState() {
     super.initState();
     widget.authService?.addListener(_onAuthChanged);
-    _selectedCategoryId = widget.initialCategoryId;
-    if (_selectedCategoryId != null && widget.categories.isNotEmpty) {
+    if (_isMapView) {
+      _ensureCategoryAndSubcategorySelected();
+    } else {
+      _selectedCategoryId = widget.initialCategoryId;
+      if (_selectedCategoryId != null && widget.categories.isNotEmpty) {
+        final currentCat = widget.categories.firstWhere(
+          (c) => c.id == _selectedCategoryId,
+          orElse: () => widget.categories.first,
+        );
+        if (currentCat.subcategories.isNotEmpty) {
+          _selectedSubcategoryId = currentCat.subcategories.first.id;
+        }
+      }
+    }
+    _loadOrders();
+  }
+
+  void _ensureCategoryAndSubcategorySelected() {
+    if (widget.categories.isNotEmpty) {
+      if (_selectedCategoryId == null || !widget.categories.any((c) => c.id == _selectedCategoryId)) {
+        _selectedCategoryId = widget.initialCategoryId ?? widget.categories.first.id;
+      }
       final currentCat = widget.categories.firstWhere(
         (c) => c.id == _selectedCategoryId,
         orElse: () => widget.categories.first,
       );
       if (currentCat.subcategories.isNotEmpty) {
-        _selectedSubcategoryId = currentCat.subcategories.first.id;
+        if (_selectedSubcategoryId == null || !currentCat.subcategories.any((s) => s.id == _selectedSubcategoryId)) {
+          _selectedSubcategoryId = currentCat.subcategories.first.id;
+        }
+      } else {
+        _selectedSubcategoryId = null;
       }
     }
-    _loadOrders();
+  }
+
+  @override
+  void didUpdateWidget(AvailableOrdersScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_isMapView && widget.categories.isNotEmpty && (_selectedCategoryId == null || oldWidget.categories.isEmpty)) {
+      _ensureCategoryAndSubcategorySelected();
+      _loadOrders();
+    }
   }
 
   void _onAuthChanged() {
@@ -84,6 +117,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
   }
 
   Future<void> _loadOrders() async {
+    if (_isMapView) {
+      _ensureCategoryAndSubcategorySelected();
+    }
     if (_orders.isEmpty) setState(() => _isLoading = true);
     try {
       final orders = await widget.apiService.getAvailableOrders(
@@ -92,6 +128,10 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
         city: _selectedSearchCity,
         search: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
+      try {
+        final favOrderIds = await widget.apiService.getFavoriteOrderIds();
+        _favoriteOrderIds = favOrderIds.toSet();
+      } catch (_) {}
 
       if (mounted) {
         setState(() {
@@ -111,9 +151,12 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
 
   Future<void> _acceptOrder(int orderId) async {
     final user = widget.authService.currentUser;
-    final bool isMaster = user?.role == 'master' || user?.masterProfile != null;
-    if (!isMaster) {
-      _showBecomeMasterDialog();
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppStrings.isRu ? 'Пожалуйста, войдите в аккаунт' : 'Iltimos, profilingizga kiring')),
+        );
+      }
       return;
     }
 
@@ -122,6 +165,9 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
       
       if (mounted) {
         // Show success snackbar
+        if (user.role != 'master') {
+          widget.authService.refreshUser();
+        }
         final isCompanyResp = res != null && res['is_company'] == true;
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -189,13 +235,19 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isMapView) {
+      _ensureCategoryAndSubcategorySelected();
+    }
     final theme = Theme.of(context);
     final user = widget.authService.currentUser;
     final filteredOrders = _orders.where((order) {
       final client = order['client'];
+      final bool hasBranch = (order['branch_id'] != null && order['branch_id'].toString().isNotEmpty) ||
+          (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty);
       final bool isComp = order['is_company'] == true ||
           order['is_company'] == 1 ||
           order['is_company'] == 'true' ||
+          hasBranch ||
           (client != null && client['account_type'] == 'company') ||
           order['account_type'] == 'company' ||
           (order['company_logo'] != null && order['company_logo'].toString().isNotEmpty);
@@ -205,8 +257,11 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
       }
 
       if (_onlyFavorites) {
+        final orderId = order['id'];
         final clientId = order['client_id'];
-        final isFav = (clientId != null && _favoriteAuthorIds.contains(clientId)) || order['is_favorite_author'] == true;
+        final isFav = (orderId != null && _favoriteOrderIds.contains(orderId)) ||
+                      (clientId != null && _favoriteAuthorIds.contains(clientId)) ||
+                      order['is_favorite_author'] == true;
         if (!isFav) return false;
       }
 
@@ -259,6 +314,18 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                                       _selectedCategoryId = null;
                                       _selectedSubcategoryId = null;
                                       _selectedSearchCity = null;
+                                    });
+                                    _loadOrders();
+                                  } else {
+                                    setState(() {
+                                      if (widget.categories.isNotEmpty) {
+                                        _selectedCategoryId = widget.categories.first.id;
+                                        if (widget.categories.first.subcategories.isNotEmpty) {
+                                          _selectedSubcategoryId = widget.categories.first.subcategories.first.id;
+                                        } else {
+                                          _selectedSubcategoryId = null;
+                                        }
+                                      }
                                     });
                                     _loadOrders();
                                   }
@@ -336,19 +403,8 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                                     setState(() {
                                       _isMapView = !_isMapView;
                                       widget.onFullscreenChanged?.call(_isMapView);
-                                      // Auto-select first category when entering map with "Все"
                                       if (_isMapView && widget.categories.isNotEmpty) {
-                                        if (_selectedCategoryId == null) {
-                                          _selectedCategoryId = widget.categories.first.id;
-                                        }
-                                        final currentCat = widget.categories.firstWhere(
-                                          (c) => c.id == _selectedCategoryId,
-                                          orElse: () => widget.categories.first,
-                                        );
-                                        final hasSub = currentCat.subcategories.any((s) => s.id == _selectedSubcategoryId);
-                                        if (!hasSub && currentCat.subcategories.isNotEmpty) {
-                                          _selectedSubcategoryId = currentCat.subcategories.first.id;
-                                        }
+                                        _ensureCategoryAndSubcategorySelected();
                                         _loadOrders();
                                       }
                                     });
@@ -452,38 +508,19 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               itemCount: _isMapView ? widget.categories.length : widget.categories.length + 1,
               itemBuilder: (context, index) {
                 if (!_isMapView && index == 0) {
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildFilterChip(
-                        label: AppStrings.isRu ? 'Все' : 'Barchasi',
-                        selected: _selectedCategoryId == null && !_onlyFavorites,
-                        onSelected: (s) {
-                          setState(() {
-                            _onlyFavorites = false;
-                            _selectedCategoryId = null;
-                            _selectedSubcategoryId = null;
-                          });
-                          _loadOrders();
-                        },
-                      ),
-                      _buildFilterChip(
-                        label: AppStrings.isRu ? '⭐ Избранные' : '⭐ Sevimlilar',
-                        selected: _onlyFavorites,
-                        onSelected: (s) {
-                          setState(() {
-                            _onlyFavorites = !_onlyFavorites;
-                            if (_onlyFavorites) {
-                              _selectedCategoryId = null;
-                              _selectedSubcategoryId = null;
-                            }
-                          });
-                        },
-                      ),
-                    ],
+                  return _buildFilterChip(
+                    label: AppStrings.isRu ? 'Все' : 'Barchasi',
+                    selected: _selectedCategoryId == null,
+                    onSelected: (s) {
+                      setState(() {
+                        _selectedCategoryId = null;
+                        _selectedSubcategoryId = null;
+                      });
+                      _loadOrders();
+                    },
                   );
                 }
-                final catIndex = _isMapView ? index : index - 1;
+                final catIndex = !_isMapView ? index - 1 : index;
                 final cat = widget.categories[catIndex];
                 return _buildFilterChip(
                   label: cat.name(AppStrings.lang),
@@ -491,9 +528,10 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                   onSelected: (s) {
                     setState(() {
                       _selectedCategoryId = cat.id;
-                      final existsInNewCat = cat.subcategories.any((sub) => sub.id == _selectedSubcategoryId);
-                      if (!existsInNewCat) {
+                      if (_isMapView) {
                         _selectedSubcategoryId = cat.subcategories.isNotEmpty ? cat.subcategories.first.id : null;
+                      } else {
+                        _selectedSubcategoryId = null;
                       }
                     });
                     _loadOrders();
@@ -623,12 +661,13 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
 
   Widget _buildSubcategoryRibbon() {
     final cat = widget.categories.firstWhere((c) => c.id == _selectedCategoryId);
+    final count = _isMapView ? cat.subcategories.length : cat.subcategories.length + 1;
     return SizedBox(
       height: 36,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
-        itemCount: _isMapView ? cat.subcategories.length : cat.subcategories.length + 1,
+        itemCount: count,
         itemBuilder: (context, index) {
           if (!_isMapView && index == 0) {
             return _buildSmallChip(
@@ -640,7 +679,7 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
               },
             );
           }
-          final subIndex = _isMapView ? index : index - 1;
+          final subIndex = !_isMapView ? index - 1 : index;
           final sub = cat.subcategories[subIndex];
           return _buildSmallChip(
             label: sub.name(AppStrings.lang),
@@ -779,6 +818,19 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                   formattedDate,
                   style: TextStyle(color: theme.textTheme.bodySmall?.color, fontSize: 12),
                 ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _toggleFavoriteOrder(order),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      _favoriteOrderIds.contains(order['id']) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                      color: _favoriteOrderIds.contains(order['id']) ? Colors.red : theme.hintColor,
+                      size: 22,
+                    ),
+                  ),
+                ),
               ],
             ),
             if (isCompany) ...[
@@ -903,6 +955,8 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                     builder: (ctx) => ClientProfileScreen(
                       clientId: order['client_id'],
                       apiService: widget.apiService,
+                      branchId: order['branch_id']?.toString(),
+                      branchName: order['branch_name']?.toString(),
                     ),
                   ),
                 );
@@ -999,94 +1053,68 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                       final bool hasApplied = order['has_applied'] == true;
                       final bool isCompany = order['is_company'] == true;
 
-                      // Company: gray after applying
-                      if (isCompany && hasApplied) {
-                        return SizedBox(
-                          height: 50,
-                          child: ElevatedButton.icon(
-                            onPressed: null,
-                            icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-                            label: Text(
-                              AppStrings.isRu ? 'Отправлено' : 'Yuborildi',
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.grey.shade300,
-                              foregroundColor: Colors.grey.shade600,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                          ),
-                        );
-                      }
 
-                      if (isCompany) {
-                        return SizedBox(
-                          height: 50,
-                          child: GradientButton(
-                            text: AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish',
-                            onPressed: () => _acceptOrder(order['id']),
-                          ),
-                        );
-                      }
 
                       final String contactPhone = (order['contact_phone'] ?? '').toString().trim();
                       final String phoneToUse = contactPhone.isNotEmpty ? contactPhone : (order['client_phone'] ?? '').toString();
                       final String rawPhone = phoneToUse.replaceAll(RegExp(r'[^\d+]'), '');
                       final String telegram = (order['contact_telegram'] ?? '').toString().trim();
+                      final bool hasValidTg = telegram.isNotEmpty &&
+                          !telegram.startsWith('+') &&
+                          (telegram.startsWith('@') || telegram.contains('t.me/') || RegExp(r'[a-zA-Z]').hasMatch(telegram)) &&
+                          telegram.replaceAll(RegExp(r'[^0-9]'), '').length < 7;
 
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 50,
-                              child: ElevatedButton.icon(
-                                onPressed: () async {
-                                  widget.apiService.trackOrderCall(order['id']);
-                                  if (rawPhone.isNotEmpty) {
-                                    final uri = Uri.parse('tel:$rawPhone');
-                                    try {
-                                      await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                    } catch (e) {
-                                      debugPrint('Could not launch phone: $e');
-                                    }
-                                  }
-                                  _acceptOrder(order['id']);
-                                },
-                                icon: const Icon(Icons.phone_rounded, size: 18),
-                                label: Text(
-                                  AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  elevation: 3,
-                                ),
-                              ),
+                      if (hasValidTg) {
+                        return SizedBox(
+                          height: 50,
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _launchTelegram(telegram, order['id']),
+                            icon: const Icon(Icons.send_rounded, size: 18),
+                            label: const Text(
+                              'Telegram',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF229ED9),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              elevation: 3,
                             ),
                           ),
-                          if (telegram.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              height: 50,
-                              width: 50,
-                              child: ElevatedButton(
-                                onPressed: () => _launchTelegram(telegram, order['id']),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF229ED9),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                  padding: EdgeInsets.zero,
-                                  elevation: 3,
-                                ),
-                                child: const Icon(Icons.send_rounded, size: 20),
-                              ),
-                            ),
-                          ],
-                        ],
+                        );
+                      }
+
+                      return SizedBox(
+                        height: 50,
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            widget.apiService.trackOrderCall(order['id']);
+                            if (rawPhone.isNotEmpty) {
+                              final uri = Uri.parse('tel:$rawPhone');
+                              try {
+                                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              } catch (e) {
+                                debugPrint('Could not launch phone: $e');
+                              }
+                            }
+                            _acceptOrder(order['id']);
+                          },
+                          icon: const Icon(Icons.phone_rounded, size: 18),
+                          label: Text(
+                            AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq',
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 3,
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -1191,6 +1219,51 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
       } catch (e) {
         debugPrint('Telegram launch error: $e');
       }
+    }
+  }
+
+  Future<void> _toggleFavoriteOrder(dynamic order) async {
+    if (order == null) return;
+    final orderId = order['id'];
+    if (orderId == null) return;
+    final currentlyFav = _favoriteOrderIds.contains(orderId);
+
+    setState(() {
+      if (currentlyFav) {
+        _favoriteOrderIds.remove(orderId);
+      } else {
+        _favoriteOrderIds.add(orderId);
+      }
+    });
+
+    try {
+      await widget.apiService.toggleFavoriteOrder(orderId);
+    } catch (_) {}
+
+    if (mounted) {
+      final name = (order['company_name'] ?? order['client_name'] ?? (AppStrings.isRu ? 'Вакансия' : 'Vakansiya')).toString().capitalizeWords();
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(!currentlyFav ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  !currentlyFav
+                      ? (AppStrings.isRu ? '$name добавлена в избранное ⭐' : '$name sevimlilarga qo\'shildi ⭐')
+                      : (AppStrings.isRu ? '$name удалена из избранных' : '$name sevimlilardan o\'chirildi'),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: !currentlyFav ? Colors.green.shade700 : Colors.grey.shade800,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
     }
   }
 
@@ -1358,101 +1431,70 @@ class _AvailableOrdersScreenState extends State<AvailableOrdersScreen> {
                   final bool hasApplied = order['has_applied'] == true;
                   final bool isCompany = order['is_company'] == true;
 
-                  // Company: gray after applying
-                  if (isCompany && hasApplied) {
-                    return SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton.icon(
-                        onPressed: null,
-                        icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-                        label: Text(
-                          AppStrings.isRu ? 'Отклик отправлен' : 'Murojaat yuborilgan',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey.shade300,
-                          foregroundColor: Colors.grey.shade600,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                      ),
-                    );
-                  }
 
-                  if (isCompany) {
-                    return SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: GradientButton(
-                        text: AppStrings.isRu ? 'Откликнуться' : 'Murojaat qilish',
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          _acceptOrder(order['id']);
-                        },
-                      ),
-                    );
-                  }
 
                   final String contactPhone = (order['contact_phone'] ?? '').toString().trim();
                   final String phoneToUse = contactPhone.isNotEmpty ? contactPhone : (order['client_phone'] ?? '').toString();
                   final String rawPhone = phoneToUse.replaceAll(RegExp(r'[^\d+]'), '');
                   final String telegram = (order['contact_telegram'] ?? '').toString().trim();
+                  final bool hasValidTgModal = telegram.isNotEmpty &&
+                      !telegram.startsWith('+') &&
+                      (telegram.startsWith('@') || telegram.contains('t.me/') || RegExp(r'[a-zA-Z]').hasMatch(telegram)) &&
+                      telegram.replaceAll(RegExp(r'[^0-9]'), '').length < 7;
 
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 52,
-                          child: ElevatedButton.icon(
-                            onPressed: () async {
-                              Navigator.pop(ctx);
-                              widget.apiService.trackOrderCall(order['id']);
-                              if (rawPhone.isNotEmpty) {
-                                final uri = Uri.parse('tel:$rawPhone');
-                                try {
-                                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                } catch (e) {
-                                  debugPrint('Could not launch phone: $e');
-                                }
-                              }
-                              _acceptOrder(order['id']);
-                            },
-                            icon: const Icon(Icons.phone_rounded, size: 20),
-                            label: Text(
-                              AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq qilish',
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                              elevation: 3,
-                            ),
-                          ),
+                  if (hasValidTgModal) {
+                    return SizedBox(
+                      height: 52,
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _launchTelegram(telegram, order['id']);
+                        },
+                        icon: const Icon(Icons.send_rounded, size: 20),
+                        label: const Text(
+                          'Telegram',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF229ED9),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          elevation: 3,
                         ),
                       ),
-                      if (telegram.isNotEmpty) ...[
-                        const SizedBox(width: 10),
-                        SizedBox(
-                          height: 52,
-                          width: 52,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _launchTelegram(telegram, order['id']);
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF229ED9),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                              padding: EdgeInsets.zero,
-                              elevation: 3,
-                            ),
-                            child: const Icon(Icons.send_rounded, size: 22),
-                          ),
-                        ),
-                      ],
-                    ],
+                    );
+                  }
+
+                  return SizedBox(
+                    height: 52,
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        widget.apiService.trackOrderCall(order['id']);
+                        if (rawPhone.isNotEmpty) {
+                          final uri = Uri.parse('tel:$rawPhone');
+                          try {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          } catch (e) {
+                            debugPrint('Could not launch phone: $e');
+                          }
+                        }
+                        _acceptOrder(order['id']);
+                      },
+                      icon: const Icon(Icons.phone_rounded, size: 20),
+                      label: Text(
+                        AppStrings.isRu ? 'Позвонить' : 'Qo\'ng\'iroq qilish',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 3,
+                      ),
+                    ),
                   );
                 },
               ),

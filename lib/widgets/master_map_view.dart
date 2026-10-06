@@ -229,10 +229,14 @@ class _MasterMapViewState extends State<MasterMapView> with SingleTickerProvider
                       radius: isSelected ? 24 : 20,
                       backgroundColor: AppColors.primary,
                       backgroundImage: (master.userAvatar != null && master.userAvatar!.isNotEmpty)
-                          ? NetworkImage(
-                              master.userAvatar!.startsWith('http')
-                                  ? master.userAvatar!
-                                  : '${ApiConfig.baseUrl.replaceAll("/api", "")}${master.userAvatar}',
+                          ? ResizeImage(
+                              NetworkImage(
+                                master.userAvatar!.startsWith('http')
+                                    ? master.userAvatar!
+                                    : '${ApiConfig.baseUrl.replaceAll("/api", "")}${master.userAvatar}',
+                              ),
+                              width: 80,
+                              height: 80,
                             )
                           : null,
                       child: (master.userAvatar == null || master.userAvatar!.isEmpty)
@@ -303,8 +307,12 @@ class _MasterMapViewState extends State<MasterMapView> with SingleTickerProvider
           children: [
             // Google Maps Tile Layer
             TileLayer(
-              urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+              urlTemplate: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+              subdomains: const ['0', '1', '2', '3'],
               userAgentPackageName: 'com.yaqin.findix',
+              panBuffer: 1,
+              keepBuffer: 3,
+              maxZoom: 19,
             ),
             MarkerLayer(markers: markers),
           ],

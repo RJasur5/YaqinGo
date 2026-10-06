@@ -369,25 +369,51 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                 ],
               ],
             ),
-            if (isMyOrderCompany) ...[
+            if (isMyOrderCompany || (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty)) ...[
               const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.business_rounded, size: 12, color: AppColors.primary),
-                    const SizedBox(width: 4),
-                    Text(
-                      AppStrings.isRu ? 'КОМПАНИЯ' : 'KOMPANIYA',
-                      style: const TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  if (isMyOrderCompany)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.business_rounded, size: 12, color: AppColors.primary),
+                          const SizedBox(width: 4),
+                          Text(
+                            AppStrings.isRu ? 'КОМПАНИЯ' : 'KOMPANIYA',
+                            style: const TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
+                  if (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.store_mall_directory_rounded, size: 12, color: Colors.teal),
+                          const SizedBox(width: 4),
+                          Text(
+                            order['branch_name'].toString(),
+                            style: const TextStyle(color: Colors.teal, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ] else if (myReqWorkers > 1) ...[
               const SizedBox(height: 8),
@@ -702,6 +728,13 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
     final int applicants = (order['applicants_count'] is int)
         ? order['applicants_count']
         : (int.tryParse(order['applicants_count']?.toString() ?? '0') ?? 0);
+    final bool isTelegramOnly = (order['contact_telegram'] != null && order['contact_telegram'].toString().trim().isNotEmpty) &&
+        (order['contact_phone'] == null || order['contact_phone'].toString().trim().isEmpty);
+    final String callLabel = isTelegramOnly
+        ? (AppStrings.isRu ? 'переходов' : 'o\'tishlar')
+        : (AppStrings.isRu ? 'звонков' : 'qo\'ng\'iroq');
+    final IconData callIcon = isTelegramOnly ? Icons.send_rounded : Icons.phone_outlined;
+    final Color callColor = isTelegramOnly ? const Color(0xFF229ED9) : const Color(0xFF059669);
 
     return Container(
       margin: const EdgeInsets.only(top: 10),
@@ -724,9 +757,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
           Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
           _buildCompactStat(Icons.touch_app_outlined, const Color(0xFF7C3AED), '$clicks', AppStrings.isRu ? 'кликнули' : 'ochildi', theme),
           Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
-          _buildCompactStat(Icons.phone_outlined, const Color(0xFF059669), '$calls', AppStrings.isRu ? 'звонков' : 'qo\'ng\'iroq', theme),
-          Container(width: 1, height: 16, color: theme.dividerColor.withValues(alpha: 0.2)),
-          _buildCompactStat(Icons.groups_outlined, const Color(0xFFD97706), '$applicants', AppStrings.isRu ? 'откликов' : 'ariza', theme),
+          _buildCompactStat(callIcon, callColor, '$calls', callLabel, theme),
         ],
       ),
     );

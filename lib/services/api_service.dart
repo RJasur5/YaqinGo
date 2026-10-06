@@ -182,6 +182,23 @@ class ApiService {
     throw _extractError(res, 'Login failed');
   }
 
+  Future<Map<String, dynamic>?> lookupUserByPhone(String phone) async {
+    String cleanDigits = phone.replaceAll(RegExp(r'\D'), '');
+    if (cleanDigits.length > 9 && cleanDigits.startsWith('998')) {
+      cleanDigits = cleanDigits.substring(3);
+    }
+    final fullPhone = '+998$cleanDigits';
+    final url = Uri.parse('${ApiConfig.apiUrl}/auth/users/lookup?phone=${Uri.encodeComponent(fullPhone)}');
+    final res = await _safeGet(url, headers: _headers);
+    if (res.statusCode == 200) {
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    } else if (res.statusCode == 404) {
+      return null;
+    } else {
+      throw _extractError(res, AppStrings.isRu ? 'Пользователь не найден' : 'Foydalanuvchi topilmadi');
+    }
+  }
+
   Future<UserModel> getMe() async {
     final res = await _safeGet(
       Uri.parse(ApiConfig.authMe),
@@ -203,6 +220,7 @@ class ApiService {
     String? companyDescription,
     double? latitude,
     double? longitude,
+    List<Map<String, dynamic>>? companyBranches,
   }) async {
     final res = await _safePut(
       Uri.parse(ApiConfig.authProfile),
@@ -217,6 +235,7 @@ class ApiService {
         if (companyDescription != null) 'company_description': companyDescription,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
+        if (companyBranches != null) 'company_branches': companyBranches,
       }),
     );
     if (res.statusCode == 200) {
@@ -371,6 +390,12 @@ class ApiService {
     String? district,
     String? address,
     List<String>? skills,
+    List<dynamic>? languages,
+    List<String>? basicSkills,
+    Map<String, dynamic>? driverLicense,
+    List<dynamic>? education,
+    List<dynamic>? workExperience,
+    Map<String, dynamic>? disability,
   }) async {
     final res = await _safePost(
       Uri.parse(ApiConfig.masterProfile),
@@ -384,6 +409,12 @@ class ApiService {
         'district': district,
         'address': address,
         'skills': skills,
+        'languages': languages,
+        'basic_skills': basicSkills,
+        'driver_license': driverLicense,
+        'education': education,
+        'work_experience': workExperience,
+        'disability': disability,
       }),
     );
     if (res.statusCode == 200) {
@@ -401,6 +432,12 @@ class ApiService {
     String? district,
     String? address,
     List<String>? skills,
+    List<dynamic>? languages,
+    List<String>? basicSkills,
+    Map<String, dynamic>? driverLicense,
+    List<dynamic>? education,
+    List<dynamic>? workExperience,
+    Map<String, dynamic>? disability,
   }) async {
     final body = <String, dynamic>{};
     if (subcategoryId != null) body['subcategory_id'] = subcategoryId;
@@ -411,6 +448,12 @@ class ApiService {
     if (district != null) body['district'] = district;
     if (address != null) body['address'] = address;
     if (skills != null) body['skills'] = skills;
+    if (languages != null) body['languages'] = languages;
+    if (basicSkills != null) body['basic_skills'] = basicSkills;
+    if (driverLicense != null) body['driver_license'] = driverLicense;
+    if (education != null) body['education'] = education;
+    if (workExperience != null) body['work_experience'] = workExperience;
+    if (disability != null) body['disability'] = disability;
 
     final res = await _safePut(
       Uri.parse(ApiConfig.masterProfile),
@@ -469,6 +512,20 @@ class ApiService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getFavoriteOrders() async {
+    try {
+      final res = await _safeGet(
+        Uri.parse('${ApiConfig.baseUrl}/api/favorites/orders'),
+        headers: _headers,
+      );
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+        return List<Map<String, dynamic>>.from(data);
+      }
+    } catch (_) {}
+    return [];
+  }
+
   // ==================== ORDERS ====================
 
   Future<Map<String, dynamic>> createOrder({
@@ -486,6 +543,9 @@ class ApiService {
     double? lon,
     String? contactPhone,
     String? contactTelegram,
+    String? branchName,
+    String? branchId,
+    String? branchAddress,
   }) async {
     final res = await _safePost(
       Uri.parse(ApiConfig.orders),
@@ -505,6 +565,9 @@ class ApiService {
         'lon': lon,
         if (contactPhone != null && contactPhone.isNotEmpty) 'contact_phone': contactPhone,
         if (contactTelegram != null && contactTelegram.isNotEmpty) 'contact_telegram': contactTelegram,
+        if (branchName != null && branchName.isNotEmpty) 'branch_name': branchName,
+        if (branchId != null && branchId.isNotEmpty) 'branch_id': branchId,
+        if (branchAddress != null && branchAddress.isNotEmpty) 'branch_address': branchAddress,
       }),
     );
     if (res.statusCode == 200) {
@@ -519,6 +582,8 @@ class ApiService {
     String? city,
     String? search,
     int? clientId,
+    String? branchId,
+    int? companyId,
   }) async {
     final params = <String, String>{
       if (categoryId != null) 'category_id': '$categoryId',
@@ -526,6 +591,8 @@ class ApiService {
       if (city != null && city.isNotEmpty) 'city': city,
       if (search != null && search.isNotEmpty) 'search': search,
       if (clientId != null) 'client_id': '$clientId',
+      if (branchId != null && branchId.isNotEmpty) 'branch_id': branchId,
+      if (companyId != null) 'company_id': '$companyId',
     };
     final uri = Uri.parse(ApiConfig.ordersAvailable).replace(queryParameters: params);
     final res = await _safeGet(uri, headers: _headers);
@@ -554,9 +621,13 @@ class ApiService {
       headers: _headers,
     );
     if (res.statusCode == 200) {
-      return jsonDecode(res.body);
+      try {
+        return jsonDecode(res.body);
+      } catch (_) {
+        return {};
+      }
     }
-    throw (jsonDecode(res.body)['detail'] ?? 'Failed to accept order');
+    throw _extractError(res, 'Failed to accept order');
   }
 
   Future<void> hrAcceptMaster(int orderId) async {
@@ -1022,6 +1093,28 @@ class ApiService {
   Future<List<int>> getFavoriteAuthorIds() async {
     try {
       final res = await _safeGet(Uri.parse(ApiConfig.favoriteAuthorIds), headers: _headers);
+      if (res.statusCode == 200) {
+        final list = jsonDecode(res.body) as List;
+        return list.map((e) => (e as num).toInt()).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> toggleFavoriteOrder(int orderId) async {
+    try {
+      final res = await _safePost(Uri.parse(ApiConfig.toggleFavoriteOrder(orderId)), headers: _headers);
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data['is_favorite'] == true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<List<int>> getFavoriteOrderIds() async {
+    try {
+      final res = await _safeGet(Uri.parse(ApiConfig.favoriteOrderIds), headers: _headers);
       if (res.statusCode == 200) {
         final list = jsonDecode(res.body) as List;
         return list.map((e) => (e as num).toInt()).toList();

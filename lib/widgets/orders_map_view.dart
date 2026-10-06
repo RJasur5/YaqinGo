@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart' hide Path;
 import '../config/theme.dart';
 import '../config/localization.dart';
 import '../config/api_config.dart';
+import '../config/region_geo.dart';
 import '../utils/formatters.dart';
 import '../services/api_service.dart';
 import '../screens/client_profile_screen.dart';
@@ -52,6 +53,7 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
   late AnimationController _pulseController;
 
   // Nearby mode
+  double _currentZoom = 13.5;
   bool _nearbyMode = false;
   bool _nearbyLoading = false;
   double? _userLat;
@@ -145,14 +147,30 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
     }
   }
 
+  bool _hasExactPoint(dynamic order) =>
+      (order['lat'] != null || order['latitude'] != null) &&
+      (order['lon'] != null || order['longitude'] != null);
+
+  /// Area (city / district) for orders where the user didn't pick a point on the map.
+  GeoArea? _orderArea(dynamic order) {
+    if (_hasExactPoint(order)) return null;
+    return RegionGeo.areaFor(order['city']?.toString(), order['district']?.toString());
+  }
+
   LatLng _getOrderCoordinates(dynamic order, int index) {
-    if (order['lat'] != null && order['lon'] != null) {
+    if (_hasExactPoint(order)) {
       try {
-        final double lat = (order['lat'] is num) ? (order['lat'] as num).toDouble() : double.parse(order['lat'].toString());
-        final double lon = (order['lon'] is num) ? (order['lon'] as num).toDouble() : double.parse(order['lon'].toString());
+        final rawLat = order['lat'] ?? order['latitude'];
+        final rawLon = order['lon'] ?? order['longitude'];
+        final double lat = (rawLat is num) ? rawLat.toDouble() : double.parse(rawLat.toString());
+        final double lon = (rawLon is num) ? rawLon.toDouble() : double.parse(rawLon.toString());
         return LatLng(lat, lon);
       } catch (_) {}
     }
+
+    // No exact point: place the order at the center of the selected city / district
+    final area = _orderArea(order);
+    if (area != null) return area.center;
 
     final orderId = (order['id'] ?? order['order_id'] ?? index) as int;
     final double latOffset = (((orderId * 23) % 60) - 30) * 0.0035;
@@ -214,19 +232,34 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
       final order = visibleOrders[i];
       
       final client = order['client'];
+      final bool hasBranch = (order['branch_id'] != null && order['branch_id'].toString().isNotEmpty) ||
+          (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty);
       final isCompanyOrder = (client != null && client['account_type'] == 'company') ||
           order['account_type'] == 'company' ||
           order['is_company'] == true ||
-          order['company_logo'] != null;
+          order['company_logo'] != null ||
+          hasBranch;
 
       if (isCompanyOrder) {
-        final companyKey = (client != null && client['id'] != null)
-            ? 'client_${client['id']}'
-            : (order['client_id'] != null
-                ? 'client_${order['client_id']}'
-                : (order['company_name'] ?? 'company_${order['id']}'));
+        final companyId = (client != null && client['id'] != null)
+            ? client['id']
+            : (order['client_id'] ?? order['company_name'] ?? order['id']);
 
-        groupedCompanyOrders.putIfAbsent(companyKey.toString(), () => []).add(order);
+        // Group strictly by branch_id or branch_name so vacancies posted by branch admin (292)
+        // and company (340) for the SAME branch merge into a SINGLE pin on the map!
+        String groupKey;
+        if (order['branch_id'] != null && order['branch_id'].toString().isNotEmpty) {
+          groupKey = 'branch_${order['branch_id']}';
+        } else if (order['branch_name'] != null && order['branch_name'].toString().trim().isNotEmpty) {
+          groupKey = 'bname_${order['branch_name'].toString().trim().toLowerCase()}';
+        } else {
+          final locKey = (order['lat'] != null && order['lon'] != null)
+              ? 'loc_${(order['lat'] as num).toDouble().toStringAsFixed(4)}_${(order['lon'] as num).toDouble().toStringAsFixed(4)}'
+              : 'main';
+          groupKey = 'comp_${companyId}_$locKey';
+        }
+
+        groupedCompanyOrders.putIfAbsent(groupKey, () => []).add(order);
       } else {
         individualOrders.add(MapEntry(order, i));
       }
@@ -259,6 +292,22 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
         originalPos: pos,
       ));
     }
+
+    // Highlight city / district areas for individual orders without an exact map point
+    final Map<String, GeoArea> highlightAreas = {};
+    for (final entry in individualOrders) {
+      final area = _orderArea(entry.key);
+      if (area != null) highlightAreas.putIfAbsent(area.key, () => area);
+    }
+    const areaColor = Color(0xFF2563EB);
+    final areaCircles = highlightAreas.values.map((a) => CircleMarker(
+          point: a.center,
+          radius: a.radiusMeters,
+          useRadiusInMeter: true,
+          color: areaColor.withValues(alpha: a.isDistrict ? 0.14 : 0.08),
+          borderColor: areaColor.withValues(alpha: 0.65),
+          borderStrokeWidth: a.isDistrict ? 2.0 : 2.5,
+        )).toList();
 
     // Spatial clustering & dispersion: prevent overlapping markers
     const double collisionThreshold = 0.00035; // ~35 meters
@@ -302,7 +351,10 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
       }
     }
 
-    // Build markers for map rendering
+    // Build markers for map rendering with adaptive zoom levels
+    final isZoomFar = _currentZoom < 11.5;
+    final isZoomMid = _currentZoom >= 11.5 && _currentZoom < 13.5;
+
     for (final item in allItems) {
       final order = item.primaryOrder;
       final isSelected = _selectedOrder != null &&
@@ -317,181 +369,386 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
         final logoUrl = companyLogo?.toString();
 
         final vacanciesCount = item.companyOrders.length;
-        final badgeText = vacanciesCount > 1
-            ? (AppStrings.isRu ? '$vacanciesCount вак.' : '$vacanciesCount vak.')
-            : (order['price'] != null
-                ? '${PriceFormatter.format(order['price'])} ${AppStrings.sum}'
-                : (AppStrings.isRu ? 'Договорная' : 'Kelishilgan'));
+        String badgeText = '';
+        if (vacanciesCount > 0) {
+          if (AppStrings.isRu) {
+            if (vacanciesCount % 10 == 1 && vacanciesCount % 100 != 11) {
+              badgeText = '$vacanciesCount вакансия';
+            } else if (vacanciesCount % 10 >= 2 && vacanciesCount % 10 <= 4 && (vacanciesCount % 100 < 10 || vacanciesCount % 100 >= 20)) {
+              badgeText = '$vacanciesCount вакансии';
+            } else {
+              badgeText = '$vacanciesCount вакансий';
+            }
+          } else {
+            badgeText = '$vacanciesCount ta vakansiya';
+          }
+        }
 
-        markers.add(
-          Marker(
-            width: 88,
-            height: 94,
-            point: item.displayPos,
-            child: GestureDetector(
-              onTap: () {
-                setState(() => _selectedOrder = order);
-                _showCompanyVacanciesModal(context, order, item.companyOrders);
-              },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                      border: Border.all(
-                        color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                        width: 3.2,
+        if (isZoomFar) {
+          // Macro Zoom (< 11.5): Micro glowing dot marker (prevents overlap with 400-500 markers)
+          markers.add(
+            Marker(
+              width: 22,
+              height: 22,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  _mapController.move(item.displayPos, 14.0);
+                  setState(() => _selectedOrder = order);
+                  _showCompanyVacanciesModal(context, order, item.companyOrders);
+                },
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.5),
+                        blurRadius: 6,
+                        spreadRadius: 1,
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.38),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                    ],
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 5,
+                      height: 5,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                    child: ClipOval(
-                      child: logoUrl != null && logoUrl.isNotEmpty
-                          ? Image.network(
-                              logoUrl.startsWith('http')
-                                  ? logoUrl
-                                  : '${ApiConfig.baseUrl.replaceAll("/api", "")}$logoUrl',
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
+                  ),
+                ),
+              ),
+            ),
+          );
+        } else if (isZoomMid) {
+          // Mid Zoom (11.5 - 13.5): Compact 36px pin with badge counter, no giant bubble
+          markers.add(
+            Marker(
+              width: 44,
+              height: 48,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _selectedOrder = order);
+                  _showCompanyVacanciesModal(context, order, item.companyOrders);
+                },
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        border: Border.all(
+                          color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                          width: 2.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: logoUrl != null && logoUrl.isNotEmpty
+                            ? Image.network(
+                                logoUrl.startsWith('http')
+                                    ? logoUrl
+                                    : '${ApiConfig.baseUrl.replaceAll("/api", "")}$logoUrl',
+                                fit: BoxFit.cover,
+                                cacheWidth: 72,
+                                cacheHeight: 72,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: AppColors.primary,
+                                  child: const Icon(Icons.business_rounded, color: Colors.white, size: 18),
+                                ),
+                              )
+                            : Container(
+                                color: AppColors.primary,
+                                child: const Icon(Icons.business_rounded, color: Colors.white, size: 18),
+                              ),
+                      ),
+                    ),
+                    if (vacanciesCount > 0)
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryDark,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.white, width: 1.2),
+                          ),
+                          child: Text(
+                            '$vacanciesCount',
+                            style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        } else {
+          // Close Zoom (>= 13.5): Full rich executive pin
+          markers.add(
+            Marker(
+              width: 96,
+              height: vacanciesCount > 0 ? 94 : 56,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _selectedOrder = order);
+                  _showCompanyVacanciesModal(context, order, item.companyOrders);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        border: Border.all(
+                          color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                          width: 3.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.38),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: logoUrl != null && logoUrl.isNotEmpty
+                            ? Image.network(
+                                logoUrl.startsWith('http')
+                                    ? logoUrl
+                                    : '${ApiConfig.baseUrl.replaceAll("/api", "")}$logoUrl',
+                                fit: BoxFit.cover,
+                                cacheWidth: 104,
+                                cacheHeight: 104,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: AppColors.primary,
+                                  child: const Icon(Icons.business_rounded, color: Colors.white, size: 26),
+                                ),
+                              )
+                            : Container(
                                 color: AppColors.primary,
                                 child: const Icon(Icons.business_rounded, color: Colors.white, size: 26),
                               ),
-                            )
-                          : Container(
-                              color: AppColors.primary,
-                              child: const Icon(Icons.business_rounded, color: Colors.white, size: 26),
-                            ),
+                      ),
                     ),
-                  ),
-                  CustomPaint(
-                    size: const Size(12, 6),
-                    painter: _TrianglePainter(
-                      color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white, width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.15),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
+                    if (vacanciesCount > 0) ...[
+                      CustomPaint(
+                        size: const Size(12, 6),
+                        painter: _TrianglePainter(
+                          color: isSelected ? AppColors.primaryDark : AppColors.primary,
                         ),
-                      ],
-                    ),
-                    child: Text(
-                      badgeText,
-                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+                      ),
+                      const SizedBox(height: 2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white, width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.15),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          badgeText,
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
+          );
+        }
       } else {
+        // Individual Order Marker
         final price = order['price'];
         final priceText = price != null ? '${PriceFormatter.format(price)} ${AppStrings.sum}' : (AppStrings.isRu ? 'Договорная' : 'Kelishilgan');
 
-        markers.add(
-          Marker(
-            width: 140,
-            height: 75,
-            point: item.displayPos,
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedOrder = order;
-                });
-                _showOrderBottomSheet(context, order);
-              },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.45),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                      border: Border.all(
+        if (isZoomFar) {
+          // Far zoom: 16px sleek blue dot
+          markers.add(
+            Marker(
+              width: 20,
+              height: 20,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  _mapController.move(item.displayPos, 14.0);
+                  setState(() => _selectedOrder = order);
+                  _showOrderBottomSheet(context, order);
+                },
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF2563EB).withValues(alpha: 0.5),
+                        blurRadius: 6,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: const BoxDecoration(
                         color: Colors.white,
-                        width: 2,
+                        shape: BoxShape.circle,
                       ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.assignment_rounded,
-                          color: Colors.white,
-                          size: 15,
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            priceText,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
-                  CustomPaint(
-                    size: const Size(12, 6),
-                    painter: _TrianglePainter(
-                      color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isSelected ? AppColors.primaryDark : AppColors.primary,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.5),
-                          blurRadius: 6,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        );
+          );
+        } else if (isZoomMid) {
+          // Mid zoom: 32px neat circle with work icon
+          markers.add(
+            Marker(
+              width: 38,
+              height: 42,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _selectedOrder = order);
+                  _showOrderBottomSheet(context, order);
+                },
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+                    ],
+                  ),
+                  child: const Icon(Icons.work_rounded, color: Colors.white, size: 16),
+                ),
+              ),
+            ),
+          );
+        } else {
+          // Close zoom: Full price chip
+          markers.add(
+            Marker(
+              width: 110,
+              height: 60,
+              point: item.displayPos,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _selectedOrder = order);
+                  _showOrderBottomSheet(context, order);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.4),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.assignment_rounded,
+                            color: Colors.white,
+                            size: 13,
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              priceText,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    CustomPaint(
+                      size: const Size(10, 5),
+                      painter: _TrianglePainter(
+                        color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected ? AppColors.primaryDark : AppColors.primary,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.5),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
       }
     }
 
@@ -504,18 +761,29 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
           options: MapOptions(
             initialCenter: centerPoint,
             initialZoom: 13.5,
-            minZoom: 10.0,
+            minZoom: 9.0,
             maxZoom: 18.0,
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
             ),
+            onPositionChanged: (camera, hasGesture) {
+              final newZoom = camera.zoom;
+              if ((newZoom - _currentZoom).abs() > 0.35) {
+                setState(() => _currentZoom = newZoom);
+              }
+            },
           ),
           children: [
             // Google Maps Tile Layer
             TileLayer(
-              urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+              urlTemplate: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+              subdomains: const ['0', '1', '2', '3'],
               userAgentPackageName: 'com.yaqin.findix',
+              panBuffer: 1,
+              keepBuffer: 3,
+              maxZoom: 19,
             ),
+            if (areaCircles.isNotEmpty) CircleLayer(circles: areaCircles),
             MarkerLayer(markers: markers),
           ],
         ),
@@ -584,10 +852,13 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
     final priceText = price != null ? '${PriceFormatter.format(price)} ${AppStrings.sum}' : (AppStrings.isRu ? 'Договорная' : 'Kelishilgan');
 
     final client = order['client'];
+    final bool hasBranch = (order['branch_id'] != null && order['branch_id'].toString().isNotEmpty) ||
+        (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty);
     final isCompanyOrder = (client != null && client['account_type'] == 'company') ||
         order['account_type'] == 'company' ||
         order['is_company'] == true ||
-        order['company_logo'] != null;
+        order['company_logo'] != null ||
+        hasBranch;
 
     showModalBottomSheet(
       context: context,
@@ -613,27 +884,56 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (isCompanyOrder) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.business_rounded, color: AppColors.primary, size: 14),
-                      const SizedBox(width: 6),
-                      Text(
-                        AppStrings.isRu ? 'Официальная вакансия от компании' : 'Kompaniyadan rasmiy vakansiya',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
-                        ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    ],
-                  ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.business_rounded, color: AppColors.primary, size: 14),
+                          const SizedBox(width: 6),
+                          Text(
+                            AppStrings.isRu ? 'Официальная вакансия' : 'Rasmiy vakansiya',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Builder(builder: (_) {
+                      final postedBy = (order['posted_by'] ?? '').toString();
+                      final cl = order['client'];
+                      final isAdm = postedBy == 'admin' || (cl != null && cl['managed_branch'] != null);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isAdm ? Colors.blue.withValues(alpha: 0.12) : const Color(0xFF00A651).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isAdm ? Colors.blue.withValues(alpha: 0.3) : const Color(0xFF00A651).withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Text(
+                          isAdm ? (AppStrings.isRu ? '👤 Опубликовал: Админ филиала' : '👤 Joyladi: Filial admini') : (AppStrings.isRu ? '🏢 Опубликовал: Компания (Сам)' : '🏢 Joyladi: Kompaniya (O\'zi)'),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isAdm ? Colors.blue.shade700 : const Color(0xFF00A651),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
                 ),
                 const SizedBox(height: 10),
               ],
@@ -749,16 +1049,30 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
       backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (modalContext, setModalState) {
-          // If we have clientId and apiService, fetch ALL open company orders in the background
-          if (clientId != null && widget.apiService != null && !hasRequestedAll) {
+          // If we have branchId / branchName / clientId, fetch all refreshed open vacancies for this branch
+          if (widget.apiService != null && !hasRequestedAll) {
             hasRequestedAll = true;
-            widget.apiService!.getAvailableOrders(clientId: clientId).then((allOrders) {
-              if (allOrders.isNotEmpty && modalContext.mounted) {
-                setModalState(() {
-                  activeCompanyOrders = allOrders;
-                });
-              }
-            }).catchError((_) {});
+            final branchId = order['branch_id']?.toString();
+            final branchName = order['branch_name']?.toString();
+            final queryBranch = (branchId != null && branchId.isNotEmpty) ? branchId : branchName;
+
+            if (queryBranch != null && queryBranch.isNotEmpty) {
+              widget.apiService!.getAvailableOrders(branchId: queryBranch).then((branchOrders) {
+                if (branchOrders.isNotEmpty && modalContext.mounted) {
+                  setModalState(() {
+                    activeCompanyOrders = branchOrders;
+                  });
+                }
+              }).catchError((_) {});
+            } else if (clientId != null) {
+              widget.apiService!.getAvailableOrders(clientId: clientId).then((allOrders) {
+                if (allOrders.isNotEmpty && modalContext.mounted) {
+                  setModalState(() {
+                    activeCompanyOrders = allOrders;
+                  });
+                }
+              }).catchError((_) {});
+            }
           }
 
           return DraggableScrollableSheet(
@@ -806,6 +1120,8 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
                             builder: (_) => ClientProfileScreen(
                               clientId: clientId,
                               apiService: widget.apiService!,
+                              branchId: order['branch_id']?.toString(),
+                              branchName: order['branch_name']?.toString(),
                             ),
                           ),
                         );
@@ -892,6 +1208,30 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
                       ),
                     ),
                   ),
+                  if (order['branch_name'] != null && order['branch_name'].toString().isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.store_mall_directory_rounded, size: 16, color: Colors.blue),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${AppStrings.isRu ? "Филиал: " : "Filial: "}${order['branch_name']}${order['branch_address'] != null && order['branch_address'].toString().isNotEmpty ? " • ${order['branch_address']}" : ""}',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Divider(color: theme.dividerColor.withValues(alpha: 0.2)),
                   const SizedBox(height: 10),
@@ -902,7 +1242,7 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
                       const Icon(Icons.business_center_rounded, color: AppColors.primary, size: 20),
                       const SizedBox(width: 8),
                       Text(
-                        '${AppStrings.isRu ? "Открытые вакансии компании" : "Kompaniyaning ochiq vakansiyalari"} (${activeCompanyOrders.length})',
+                        '${order['branch_name'] != null && order['branch_name'].toString().isNotEmpty ? (AppStrings.isRu ? "Вакансии филиала" : "Filial vakansiyalari") : (AppStrings.isRu ? "Открытые вакансии" : "Ochiq vakansiyalar")} (${activeCompanyOrders.length})',
                         style: TextStyle(
                           color: theme.textTheme.titleMedium?.color,
                           fontSize: 15,
@@ -974,6 +1314,43 @@ class _OrdersMapViewState extends State<OrdersMapView> with SingleTickerProvider
                                   ),
                                 ],
                               ),
+                              const SizedBox(height: 6),
+                              Builder(builder: (_) {
+                                final postedBy = (item['posted_by'] ?? '').toString();
+                                final cl = item['client'];
+                                final isAdm = postedBy == 'admin' || (cl != null && cl['managed_branch'] != null) || (cl != null && cl['role'] == 'branch_admin');
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: isAdm ? Colors.blue.withValues(alpha: 0.12) : const Color(0xFF00A651).withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isAdm ? Colors.blue.withValues(alpha: 0.3) : const Color(0xFF00A651).withValues(alpha: 0.3),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        isAdm ? Icons.person_pin_rounded : Icons.business_rounded,
+                                        size: 13,
+                                        color: isAdm ? Colors.blue.shade700 : const Color(0xFF00A651),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        isAdm
+                                            ? (AppStrings.isRu ? '👤 Опубликовал: Админ филиала' : '👤 Joyladi: Filial admini')
+                                            : (AppStrings.isRu ? '🏢 Опубликовал: Компания (Сам)' : '🏢 Joyladi: Kompaniya (O\'zi)'),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: isAdm ? Colors.blue.shade700 : const Color(0xFF00A651),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
                               if (item['description'] != null && item['description'].toString().isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 Text(

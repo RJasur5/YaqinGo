@@ -13,6 +13,8 @@ class ClientProfileScreen extends StatefulWidget {
   final ApiService apiService;
   final bool hidePhone;
   final String? overridePhone;
+  final String? branchId;
+  final String? branchName;
 
   const ClientProfileScreen({
     super.key,
@@ -20,6 +22,8 @@ class ClientProfileScreen extends StatefulWidget {
     required this.apiService,
     this.hidePhone = false,
     this.overridePhone,
+    this.branchId,
+    this.branchName,
   });
 
   @override
@@ -47,7 +51,33 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
       List<dynamic> vacancies = [];
       if (isCompanyProfile) {
         try {
-          vacancies = await widget.apiService.getAvailableOrders(clientId: widget.clientId);
+          final queryBranch = (widget.branchId != null && widget.branchId!.isNotEmpty)
+              ? widget.branchId
+              : widget.branchName;
+          List<dynamic> allOrders = [];
+          if (queryBranch != null && queryBranch.isNotEmpty) {
+            allOrders = await widget.apiService.getAvailableOrders(branchId: queryBranch);
+          }
+          if (allOrders.isEmpty) {
+            allOrders = await widget.apiService.getAvailableOrders(clientId: widget.clientId);
+          }
+          if ((widget.branchId != null && widget.branchId!.isNotEmpty) ||
+              (widget.branchName != null && widget.branchName!.isNotEmpty)) {
+            final filtered = allOrders.where((o) {
+              final bId = o['branch_id']?.toString();
+              final bName = o['branch_name']?.toString();
+              if (widget.branchId != null && widget.branchId!.isNotEmpty && bId == widget.branchId) {
+                return true;
+              }
+              if (widget.branchName != null && widget.branchName!.isNotEmpty && bName == widget.branchName) {
+                return true;
+              }
+              return false;
+            }).toList();
+            vacancies = filtered.isNotEmpty ? filtered : allOrders;
+          } else {
+            vacancies = allOrders;
+          }
         } catch (_) {}
       }
       if (mounted) {
@@ -220,6 +250,28 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                           ),
                         ],
                       ),
+                      if (widget.branchName != null && widget.branchName!.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.blue.withValues(alpha: 0.25)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.store_mall_directory_rounded, size: 14, color: Colors.blue),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${AppStrings.isRu ? "Филиал: " : "Filial: "}${widget.branchName}',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       if (isCompany) ...[
                         const SizedBox(height: 14),
@@ -364,7 +416,9 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 const Icon(Icons.work_outline_rounded, color: AppColors.primary, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  '${AppStrings.isRu ? "Открытые вакансии компании" : "Kompaniyaning ochiq vakansiyalari"} (${_vacancies.length})',
+                  widget.branchName != null && widget.branchName!.isNotEmpty
+                      ? '${AppStrings.isRu ? "Вакансии филиала" : "Filial vakansiyalari"} (${_vacancies.length})'
+                      : '${AppStrings.isRu ? "Открытые вакансии компании" : "Kompaniyaning ochiq vakansiyalari"} (${_vacancies.length})',
                   style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                 ),
               ],

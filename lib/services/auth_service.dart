@@ -134,6 +134,7 @@ class AuthService extends ChangeNotifier {
     String? companyDescription,
     double? latitude,
     double? longitude,
+    List<Map<String, dynamic>>? companyBranches,
   }) async {
     final user = await api.updateProfile(
       name: name,
@@ -145,6 +146,7 @@ class AuthService extends ChangeNotifier {
       companyDescription: companyDescription,
       latitude: latitude,
       longitude: longitude,
+      companyBranches: companyBranches,
     );
     currentUser = user;
     return user;
@@ -210,6 +212,8 @@ class AuthService extends ChangeNotifier {
       return currentUser;
     }
   }
+
+  Future<UserModel?> refreshCurrentUser() => refreshUser();
 
   Future<void> updateFCMToken(String fcmToken, {String? apnsToken}) async {
     if (token == null) return;

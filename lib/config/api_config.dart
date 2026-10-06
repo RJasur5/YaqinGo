@@ -48,9 +48,11 @@ class ApiConfig {
   static String trackOrderClick(int id) => '$apiUrl/orders/$id/click';
   static String trackOrderCall(int id) => '$apiUrl/orders/$id/call';
 
-  // Favorite authors/employers
+  // Favorite authors & orders
   static String toggleFavoriteAuthor(int authorId) => '$apiUrl/favorites/author/$authorId';
   static String get favoriteAuthorIds => '$apiUrl/favorites/authors/ids';
+  static String toggleFavoriteOrder(int orderId) => '$apiUrl/favorites/order/$orderId';
+  static String get favoriteOrderIds => '$apiUrl/favorites/orders/ids';
 }
 
 

@@ -124,8 +124,12 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                         ),
                         children: [
                           TileLayer(
-                            urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                            urlTemplate: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                            subdomains: const ['0', '1', '2', '3'],
                             userAgentPackageName: 'com.yaqin.findix',
+                            panBuffer: 1,
+                            keepBuffer: 3,
+                            maxZoom: 19,
                           ),
                         ],
                       ),

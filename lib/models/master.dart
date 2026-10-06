@@ -27,6 +27,13 @@ class MasterModel {
   final String? companyBanner;
   final double? latitude;
   final double? longitude;
+  final List<dynamic>? languages;
+  final List<String>? basicSkills;
+  final Map<String, dynamic>? driverLicense;
+  final List<dynamic>? education;
+  final List<dynamic>? workExperience;
+  final Map<String, dynamic>? disability;
+  final bool isFavorite;
 
   MasterModel({
     required this.id,
@@ -57,6 +64,13 @@ class MasterModel {
     this.companyBanner,
     this.latitude,
     this.longitude,
+    this.languages,
+    this.basicSkills,
+    this.driverLicense,
+    this.education,
+    this.workExperience,
+    this.disability,
+    this.isFavorite = false,
   });
 
   factory MasterModel.fromJson(Map<String, dynamic> json) {
@@ -99,6 +113,17 @@ class MasterModel {
               ? (json['longitude'] as num).toDouble()
               : double.tryParse(json['longitude'].toString()))
           : null,
+      languages: json['languages'] != null ? List<dynamic>.from(json['languages']) : null,
+      basicSkills: json['basic_skills'] != null ? List<String>.from(json['basic_skills']) : null,
+      driverLicense: json['driver_license'] is Map
+          ? Map<String, dynamic>.from(json['driver_license'] as Map)
+          : null,
+      education: json['education'] != null ? List<dynamic>.from(json['education']) : null,
+      workExperience: json['work_experience'] != null ? List<dynamic>.from(json['work_experience']) : null,
+      disability: json['disability'] is Map
+          ? Map<String, dynamic>.from(json['disability'] as Map)
+          : null,
+      isFavorite: json['is_favorite'] ?? false,
     );
   }
 
@@ -130,6 +155,13 @@ class MasterModel {
       'company_banner': companyBanner,
       'latitude': latitude,
       'longitude': longitude,
+      'languages': languages,
+      'basic_skills': basicSkills,
+      'driver_license': driverLicense,
+      'education': education,
+      'work_experience': workExperience,
+      'disability': disability,
+      'is_favorite': isFavorite,
     };
   }
 

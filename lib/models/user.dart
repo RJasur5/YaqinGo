@@ -17,6 +17,9 @@ class UserModel {
   final String? companyDescription;
   final double? latitude;
   final double? longitude;
+  final bool canManageBranches;
+  final List<Map<String, dynamic>> companyBranches;
+  final Map<String, dynamic>? managedBranch;
   final MasterModel? masterProfile;
   final List<Map<String, dynamic>>? reviewStats;
 
@@ -37,6 +40,9 @@ class UserModel {
     this.companyDescription,
     this.latitude,
     this.longitude,
+    this.canManageBranches = false,
+    this.companyBranches = const [],
+    this.managedBranch,
     this.masterProfile,
     this.reviewStats,
   });
@@ -59,6 +65,13 @@ class UserModel {
       companyDescription: json['company_description'],
       latitude: json['latitude'] != null ? (json['latitude'] as num).toDouble() : null,
       longitude: json['longitude'] != null ? (json['longitude'] as num).toDouble() : null,
+      canManageBranches: json['can_manage_branches'] ?? false,
+      companyBranches: json['company_branches'] != null
+          ? List<Map<String, dynamic>>.from(json['company_branches'])
+          : const [],
+      managedBranch: json['managed_branch'] != null
+          ? Map<String, dynamic>.from(json['managed_branch'])
+          : null,
       masterProfile: json['master_profile'] != null ? MasterModel.fromJson(json['master_profile']) : null,
       reviewStats: json['review_stats'] != null ? List<Map<String, dynamic>>.from(json['review_stats']) : null,
     );
@@ -67,6 +80,7 @@ class UserModel {
   bool get isMaster => role == 'master' || role == 'admin';
   bool get isAdmin => role == 'admin';
   bool get isCompany => accountType == 'company';
+  bool get isBranchAdmin => managedBranch != null && managedBranch!['branch_id'] != null;
 }
 
 class ClientReviewModel {

@@ -18,11 +18,32 @@ class AdminUsersScreen extends StatefulWidget {
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
   List<UserModel> _users = [];
   bool _isLoading = true;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _fetchUsers();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<UserModel> get _filteredUsers {
+    if (_searchQuery.trim().isEmpty) return _users;
+    final q = _searchQuery.trim().toLowerCase();
+    final cleanPhoneQuery = q.replaceAll(RegExp(r'\D'), '');
+    return _users.where((u) {
+      final matchName = u.name.toLowerCase().contains(q);
+      final userPhoneClean = u.phone.replaceAll(RegExp(r'\D'), '');
+      final matchPhone = u.phone.toLowerCase().contains(q) ||
+          (cleanPhoneQuery.isNotEmpty && userPhoneClean.contains(cleanPhoneQuery));
+      return matchName || matchPhone;
+    }).toList();
   }
 
   Future<void> _fetchUsers() async {
@@ -396,6 +417,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     final cityController = TextEditingController(text: user.city);
     String selectedRole = user.role;
     bool isBlocked = user.isBlocked;
+    bool canManageBranches = user.canManageBranches;
 
     final result = await showDialog<bool>(
       context: context,
@@ -434,6 +456,19 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   onChanged: (val) => setDialogState(() => isBlocked = val),
                   activeColor: palette.primary,
                 ),
+                if (user.isCompany) ...[
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    title: Text(AppStrings.isRu ? 'Управление филиалами (сеть)' : 'Filiallarni boshqarish (tarmoq)', style: TextStyle(color: palette.textPrimary)),
+                    subtitle: Text(
+                      AppStrings.isRu ? 'Разрешить компании добавлять десятки филиалов' : 'Kompaniyaga ko\'p filiallar qo\'shishga ruxsat',
+                      style: TextStyle(color: palette.textSecondary, fontSize: 12),
+                    ),
+                    value: canManageBranches,
+                    onChanged: (val) => setDialogState(() => canManageBranches = val),
+                    activeColor: palette.primary,
+                  ),
+                ],
               ],
             ),
           ),
@@ -458,6 +493,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           'city': cityController.text,
           'role': selectedRole,
           'is_blocked': isBlocked,
+          if (user.isCompany) 'can_manage_branches': canManageBranches,
         });
         _fetchUsers();
       } catch (e) {
@@ -495,77 +531,129 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         final palette = AppTheme.getPalette(mode);
         
         if (_isLoading) return Center(child: CircularProgressIndicator(color: palette.primary));
- 
-        return RefreshIndicator(
-          onRefresh: _fetchUsers,
-          color: palette.primary,
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-            itemCount: _users.length,
-            itemBuilder: (context, index) {
-              final user = _users[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: GlassContainer(
-                  padding: const EdgeInsets.all(4),
-                  child: ListTile(
-                    onTap: () => _showUserDetail(user),
-                    leading: CircleAvatar(
-                      radius: 20,
-                      backgroundColor: user.isBlocked ? Colors.red.withOpacity(0.2) : palette.primary.withOpacity(0.1),
-                      backgroundImage: user.avatar != null 
-                        ? NetworkImage('${ApiConfig.baseUrl}${user.avatar}')
-                        : null,
-                      child: user.avatar == null 
-                        ? Text(
-                            user.name.isNotEmpty ? user.name[0].toUpperCase() : '?', 
-                            style: TextStyle(color: user.isBlocked ? Colors.red : palette.primary, fontWeight: FontWeight.bold)
+
+        final filtered = _filteredUsers;
+
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: palette.card,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: palette.cardBorder.withOpacity(0.3)),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  style: TextStyle(color: palette.textPrimary, fontSize: 14),
+                  onChanged: (val) => setState(() => _searchQuery = val),
+                  decoration: InputDecoration(
+                    hintText: AppStrings.isRu ? 'Поиск по имени или телефону...' : 'Ism yoki telefon bo\'yicha qidiruv...',
+                    hintStyle: TextStyle(color: palette.textSecondary.withOpacity(0.6), fontSize: 14),
+                    prefixIcon: Icon(Icons.search_rounded, color: palette.primary, size: 20),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(Icons.close_rounded, color: palette.textSecondary, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
                           )
                         : null,
-                    ),
-                    title: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            user.name, 
-                            style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.bold)
-                          )
-                        ),
-                        if (user.role == 'master' || user.role == 'admin')
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: palette.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                            child: Text(
-                              user.role == 'admin' ? 'A' : 'M', 
-                              style: TextStyle(color: palette.primary, fontSize: 10, fontWeight: FontWeight.bold)
-                            ),
-                          ),
-                      ],
-                    ),
-                    subtitle: Text('${user.phone}', style: TextStyle(color: palette.textSecondary)),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: Icon(Icons.vpn_key_rounded, color: palette.primary.withOpacity(0.6), size: 18),
-                          onPressed: () => _changePassword(user),
-                          tooltip: AppStrings.isRu ? 'Сменить пароль' : 'Parolni almashtirish',
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.edit_outlined, color: palette.primary.withOpacity(0.7), size: 18),
-                          onPressed: () => _editUser(user),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
-                          onPressed: () => _deleteUser(user),
-                        ),
-                      ],
-                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            ),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _fetchUsers,
+                color: palette.primary,
+                child: filtered.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+                          Center(
+                            child: Text(
+                              AppStrings.isRu ? 'Пользователи не найдены' : 'Foydalanuvchilar topilmadi',
+                              style: TextStyle(color: palette.textSecondary),
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final user = filtered[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: GlassContainer(
+                              padding: const EdgeInsets.all(4),
+                              child: ListTile(
+                                onTap: () => _showUserDetail(user),
+                                leading: CircleAvatar(
+                                  radius: 20,
+                                  backgroundColor: user.isBlocked ? Colors.red.withOpacity(0.2) : palette.primary.withOpacity(0.1),
+                                  backgroundImage: user.avatar != null 
+                                    ? NetworkImage('${ApiConfig.baseUrl}${user.avatar}')
+                                    : null,
+                                  child: user.avatar == null 
+                                    ? Text(
+                                        user.name.isNotEmpty ? user.name[0].toUpperCase() : '?', 
+                                        style: TextStyle(color: user.isBlocked ? Colors.red : palette.primary, fontWeight: FontWeight.bold)
+                                      )
+                                    : null,
+                                ),
+                                title: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        user.name, 
+                                        style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.bold)
+                                      )
+                                    ),
+                                    if (user.role == 'master' || user.role == 'admin')
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(color: palette.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                                        child: Text(
+                                          user.role == 'admin' ? 'A' : 'M', 
+                                          style: TextStyle(color: palette.primary, fontSize: 10, fontWeight: FontWeight.bold)
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                subtitle: Text('${user.phone}', style: TextStyle(color: palette.textSecondary)),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.vpn_key_rounded, color: palette.primary.withOpacity(0.6), size: 18),
+                                      onPressed: () => _changePassword(user),
+                                      tooltip: AppStrings.isRu ? 'Сменить пароль' : 'Parolni almashtirish',
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.edit_outlined, color: palette.primary.withOpacity(0.7), size: 18),
+                                      onPressed: () => _editUser(user),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
+                                      onPressed: () => _deleteUser(user),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
         );
       },
     );

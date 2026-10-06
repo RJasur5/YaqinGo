@@ -44,6 +44,8 @@ class _MastersListScreenState extends State<MastersListScreen> {
   String? _selectedCity;
   final _searchController = TextEditingController();
 
+  final Set<int> _favoriteMasterIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -54,25 +56,43 @@ class _MastersListScreenState extends State<MastersListScreen> {
       _selectedCategoryId = widget.initialCategoryId;
       _autoSelectFirstSubcategory();
     }
-    final userCity = widget.authService?.currentUser?.city;
-    if (userCity != null && userCity.trim().isNotEmpty) {
-      final key = RegionsConfig.getKey(userCity);
-      _selectedCity = key.isNotEmpty ? RegionsConfig.getDisplayName(key) : userCity;
-    } else {
-      _selectedCity = RegionsConfig.getDisplayName(RegionsConfig.regionKeys.first);
-    }
+    // Always default city to Tashkent
+    _selectedCity = RegionsConfig.getDisplayName(RegionsConfig.regionKeys.first);
     _loadMasters();
+    _loadFavorites();
+  }
+
+  Future<void> _loadFavorites() async {
+    try {
+      final favs = await widget.apiService.getFavorites();
+      if (mounted) {
+        setState(() {
+          _favoriteMasterIds.clear();
+          _favoriteMasterIds.addAll(favs.map((m) => m.id));
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFavorite(MasterModel master) async {
+    final currentlyFav = _favoriteMasterIds.contains(master.id) || master.isFavorite;
+    setState(() {
+      if (currentlyFav) {
+        _favoriteMasterIds.remove(master.id);
+      } else {
+        _favoriteMasterIds.add(master.id);
+      }
+    });
+    try {
+      await widget.apiService.toggleFavorite(master.id);
+    } catch (_) {}
   }
 
   void _onAuthChanged() {
     if (mounted) {
-      final userCity = widget.authService?.currentUser?.city;
-      if (userCity != null && userCity.trim().isNotEmpty) {
-        final key = RegionsConfig.getKey(userCity);
-        _selectedCity = key.isNotEmpty ? RegionsConfig.getDisplayName(key) : userCity;
-      }
       setState(() {});
       _loadMasters();
+      _loadFavorites();
     }
   }
 
@@ -278,11 +298,7 @@ class _MastersListScreenState extends State<MastersListScreen> {
                     final isComp = m.accountType == 'company' ||
                         (m.companyLogo != null && m.companyLogo!.isNotEmpty) ||
                         (m.companyBanner != null && m.companyBanner!.isNotEmpty);
-                    if (_selectedAccountTypeFilter == 'person') {
-                      if (isComp) return false;
-                    } else if (_selectedAccountTypeFilter == 'company') {
-                      if (!isComp) return false;
-                    }
+                    if (isComp) return false;
                     return true;
                   }).toList();
 
@@ -369,8 +385,10 @@ class _MastersListScreenState extends State<MastersListScreen> {
                                         itemBuilder: (context, index) {
                                           return MasterCard(
                                             master: filteredMasters[index],
-                                            onTap: () {
-                                              Navigator.push(
+                                            isFavorite: _favoriteMasterIds.contains(filteredMasters[index].id) || filteredMasters[index].isFavorite,
+                                            onFavorite: () => _toggleFavorite(filteredMasters[index]),
+                                            onTap: () async {
+                                              await Navigator.push(
                                                 context,
                                                 MaterialPageRoute(
                                                   builder: (_) => MasterDetailScreen(
@@ -379,6 +397,7 @@ class _MastersListScreenState extends State<MastersListScreen> {
                                                   ),
                                                 ),
                                               );
+                                              _loadFavorites();
                                             },
                                           );
                                         },
